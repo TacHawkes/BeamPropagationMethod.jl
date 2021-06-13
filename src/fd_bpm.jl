@@ -1,9 +1,24 @@
+"""
+    fdbpm!(p)
+
+Performs an interative finite-differnece beam propagation simulation of the optical environment specified
+in `p` using the Douglas-Gunn alternating direction implicit algorithm (DG-ADI). The `p` parameter is a Dict
+containing the fields specified in TODO.
+"""
 function fdbpm!(p)
     k_0 = 2π/p[:lambda]    
 
     # check fields
     get!(p, :name, @__FILE__)
-    get!(p, :shapes, [0 0 0 1 0])
+    if haskey(p, :n_cladding)
+        error("Error: n_cladding has been renamed n_background")
+    end
+    if (haskey(p, :nFunc) && haskey(p, :shapes))
+        error("You must specify exactly one of the fields 'shapes' and 'nFunc'")
+    end
+    if haskey(p, :shapes) && isempty(p[:shapes])
+        p[:shapes] = [0 0 0 1 0]
+    end
     get!(p, :figNum, 1)
     get!(p, :figTitle, "")
     get!(p, :finalizeVideo, false)    
@@ -18,12 +33,13 @@ function fdbpm!(p)
     get!(p, :noShapeOutline, false)
     get!(p, :modes, nothing)
     get!(p, :Eparameters, Dict())
+    get!(p, :nParameters, Dict())
     get!(p, :taperScaling, 1)
     get!(p, :twistRate, 0)
     get!(p, :rho_e, 0.22)
     get!(p, :bendingRoC, Inf)
     get!(p, :bendDirection, 0)
-    if size(p[:shapes], 2) == 5
+    if haskey(p, :shapes) && size(p[:shapes], 2) == 5
         if any(p[:shapes][:,4] .== 4) || any(p[:shapes][:,4] .== 5)
             @error("Since you have a GRIN lens, you must define the gradient constant g in the shapes array")
         else
@@ -33,7 +49,7 @@ function fdbpm!(p)
         end 
     end
     if p[:saveVideo] && !haskey(p, :videoName)
-        p[:videoName] = p[:name] * ".gif"
+        p[:videoName] = p[:name] * ".mp4"
     end
     get!(p, :Intensity_colormap, 1)
     get!(p, :Phase_colormap, 3)
@@ -95,22 +111,24 @@ function fdbpm!(p)
             p[:E].field = p[:E].field/sqrt(sum(abs.(p[:E].field).^2))
         end
         p[:originalEinput] = p[:E]
-        p[:originalShapesInput] = p[:shapes]
+        if (haskey(p, :shapes))
+            p[:originalShapesInput] = p[:shapes]
+        end
     end
 
     if isa(p[:E], Function)
         E = p[:E](X, Y, p[:Eparameters])
         E ./= sqrt(sum(abs.(E).^2))
     else
-        Nx_Esource, Ny_Esource = size(p[:E].field)
-        if (Nx_Esource != Nx || Ny_Esource != Ny)        
-            dx_Esource = p[:E].Lx/Nx_Esource
-            dy_Esource = p[:E].Ly/Ny_Esource
-            x_Esource = dx_Esource*(-(Nx_Esource - 1)/2:(Nx_Esource-1)/2)
-            y_Esource = dy_Esource*(-(Ny_Esource - 1)/2:(Ny_Esource-1)/2)        
-            E = Interpolations.interpolate((x_Esource, y_Esource), p[:E].field, Gridded(Linear()))
+        Ny_source, Nx_source = size(p[:E].field)
+        if (Nx_source != Nx || Ny_source != Ny)        
+            dx_source = p[:E].Lx/Nx_source
+            dy_source = p[:E].Ly/Ny_source
+            x_source = dx_source*(-(Nx_source - 1)/2:(Nx_source-1)/2)
+            y_source = dy_source*(-(Ny_source - 1)/2:(Ny_source-1)/2)        
+            E = Interpolations.LinearInterpolation((y_source, x_source), p[:E].field; extrapolation_bc=Line())
             E = E.(X, Y)
-            E .*= √(sum(abs.(p[:E].field).^2)/sum(abs.(E).^2))        
+            E .*= √(sum(abs.(p[:E].field).^2)/sum(abs.(E).^2))
         else
             E = p[:E].field
         end
@@ -120,8 +138,42 @@ function fdbpm!(p)
 
     if !priorData
         p[:Einitial] = E
+        p[:I0] = maximum(abs.(E).^2)
     end
 
+    if haskey(p, :shapes)
+        n = p[:n_background] * ones(Float32, Nx, Ny)
+        for iShape = 1:size(p[:shapes], 1)
+            if p[:shapes][iShape,4] == 1
+                n[@. ((X - p[:shapes][iShape,1])^2 + (Y - p[:shapes][iShape,2])^2 < p[:shapes][iShape,3]^2)] .= p[:shapes][iShape,5]
+            elseif p[:shapes][iShape,4] == 2
+                delta = max(dx, dy)                              
+                r_diff = @. √((X - p[:shapes][iShape,1])^2 + (Y - p[:shapes][iShape,2])^2) - p[:shapes][iShape,3] + delta/2                
+                n[r_diff .< 0] .= p[:shapes][iShape,5]
+                n[(r_diff .>= 0) .& (r_diff .< delta)] = @. r_diff[(r_diff >= 0) & (r_diff < delta)]/delta*(p[:n_background] - p[:shapes][iShape,5]) + p[:shapes][iShape,5]
+            elseif p[:shapes][iShape,4] == 3
+                r_ratio_sqr = @. ((X - p[:shapes][iShape,1])^2 + (Y - p[:shapes][iShape,2])^2)/p[:shapes][iShape,3]^2
+                n[r_ratio_sqr .< 1] = r_ratio_sqr[r_ratio_sqr .< 1] *(p[:n_background] - p[:shapes][iShape,5]) .+ p[:shapes][iShape,5]
+            elseif p[:shapes][iShape,4] == 4
+                r = @. √((X - p[:shapes][iShape,1])^2 + (Y - p[:shapes][iShape,2])^2)
+                n[r .< p[:shapes][iShape,3]] = p[:shapes][iShape,5]*sech.(p[:shapes][iShape,6]*r[r .< p[:shapes][iShape,3]])
+            elseif p[:shapes][iShape,4] == 5
+                r = @. abs(Y - p[:shapes][iShape,2])
+                n[r .< p[:shapes][iShape,3]] = p[:shapes][iShape,5]*sech.(p[:shapes][iShape,6]*r[r .< p[:shapes][iShape,3]])
+            end
+        end
+    elseif isa(p[:n], Function)
+        n = convert.(Float32, p[:n](X,Y,p[:n_background],p[:nParameters]))
+    else
+        Ny_source, Nx_source = size(p[:n].n)        
+        dx_source = p[:n].Lx/Nx_source
+        dy_source = p[:n].Ly/Ny_source
+        x_source = dx_source*(-(Nx_source - 1)/2:(Nx_source-1)/2)
+        y_source = dy_source*(-(Ny_source - 1)/2:(Ny_source-1)/2)       
+        itp = Interpolations.LinearInterpolation((y_source, x_source), p[:n].n; extrapolation_bc=Flat())        
+        n = convert.(Float32, itp.(Y, X))
+    end        
+    
     Nz = max(p[:updates], round(Int64, p[:Lz] / p[:dz_target]))
     dz = p[:Lz] / Nz
 
@@ -131,7 +183,7 @@ function fdbpm!(p)
         dz_max1 = max_a*4*dx^2*k_0*p[:n_0]
         dz_max2 = max_a*4*dy^2*k_0*p[:n_0]
         dz_max3 = max_d*2*p[:n_0]/k_0
-        if any(p[:shapes][:,4] .== 1) || any(p[:shapes][:,4] .== 2)
+        if haskey(p, :shapes) && (any(p[:shapes][:,4] .== 1) || any(p[:shapes][:,4] .== 2))
             if dz > min(dz_max1, dz_max2, dz_max3)
                 @warn(@sprintf("z step size is high (> %.1e m), which may introduce numerical artifacts. You can disable this warning by setting p[:disableStepsizeWarning] = true.", min(dz_max1, dz_max2, dz_max3)))
             end
@@ -151,14 +203,10 @@ function fdbpm!(p)
 
     ax = dz/(4im*dx^2*k_0*p[:n_0])
     ay = dz/(4im*dy^2*k_0*p[:n_0])
-    d = -dz*k_0/(2*p[:n_0])
+    d = -dz*k_0
 
-    absorber = @. exp(-dz*max(0, max(abs(Y) - p[:Ly_main]/2, abs(X) - p[:Lx_main]/2))^2*p[:alpha])
-    multiplier = absorber
-
-    shapeAbsorptions = @. exp(-dz*2*π*imag(p[:shapes][:,5])/p[:lambda])
-    claddingAbsorption = @. exp(-dz*2*π*imag(p[:n_cladding])/p[:lambda])
-
+    multiplier = @. exp(-dz*max(0, max(abs(Y) - p[:Ly_main]/2, abs(X) - p[:Lx_main]/2))^2*p[:alpha])    
+    
     # init plot
     plots = plot(
         layout=(2,2),
@@ -167,19 +215,17 @@ function fdbpm!(p)
     )
     plot_idx = 1
     if p[:downsampleImages]
-        p1 = heatmap!(x_plot, y_plot, zeros(min(500, Ny), min(500, Nx)), c=get_colormap(p[:n_colormap]))
-        n_plot = plots.series_list[plot_idx]
-        n_plot.plotattributes[:z] = zeros(min(500, Ny), min(500, Nx))
+        p1 = heatmap!(x_plot, y_plot, real.(n[ix_plot, iy_plot]), c=get_colormap(p[:n_colormap]))
+        n_plot = plots.series_list[plot_idx]        
     else
-        p1 = heatmap!(x*1e6, y*1e6, zeros(Ny, Nx), c=get_colormap(p[:n_colormap]))
-        n_plot = plots.series_list[plot_idx]
-        n_plot.plotattributes[:z] = n_plot.plotattributes[:z] = zeros(min(500, Ny), min(500, Nx))
-    end    
+        p1 = heatmap!(x*1e6, y*1e6, real.(n), c=get_colormap(p[:n_colormap]))
+        n_plot = plots.series_list[plot_idx]        
+    end        
     plot_idx += 1
     plot!(
         sp=1,
-        xlims=([-1 1]*1e6*Lx/(2*p[:displayScaling])),
-        ylims=([-1 1]*1e6*Ly/(2*p[:displayScaling])),
+        xlims=([-1, 1]*1e6*Lx/(2*p[:displayScaling])),
+        ylims=([-1, 1]*1e6*Ly/(2*p[:displayScaling])),
         xlabel="x [μm]",
         ylabel="y [μm]",
         title="Real part of refractive index",
@@ -195,10 +241,10 @@ function fdbpm!(p)
         p[:powers][1] = 1
         p[:xzSlice] = Matrix{ComplexF32}[fill(NaN, Nx, p[:updates])]
         p[:yzSlice] = Matrix{ComplexF32}[fill(NaN, Ny, p[:updates])]
-        p[:xzSlice][1][:,1] = E[:, round(Int64, (Nx-1)/2 + 1)]
-        p[:yzSlice][1][:,1] = E[round(Int64, (Ny-1)/2 + 1), :]
+        p[:xzSlice][1][:,1] = E[round(Int64, (Ny-1)/2 + 1),:]
+        p[:yzSlice][1][:,1] = E[:,round(Int64, (Nx-1)/2 + 1)]
     end
-
+    
     plot!(p[:z]*1e3, p[:powers], lw=2, sp=2)
     powers_plot = plots.series_list[plot_idx]
     plot_idx += 1    
@@ -213,27 +259,25 @@ function fdbpm!(p)
     
     if p[:downsampleImages]
         heatmap!(x_plot*1e6, y_plot*1e6, abs.(E[iy_plot, ix_plot]).^2, c=get_colormap(p[:Intensity_colormap]), sp=3)
-        Efield_plot = plots.series_list[plot_idx]
-        Efield_plot.plotattributes[:z] = abs.(E[iy_plot, ix_plot]).^2
+        Efield_plot = plots.series_list[plot_idx]        
     else
-        heatmap!(x*1e6, y*1e6, abs.(E').^2, c=get_colormap(p[:Intensity_colormap]), sp=3)
-        Efield_plot = plots.series_list[plot_idx]
-        Efield_plot.plotattributes[:z] = abs.(E').^2
-    end            
+        heatmap!(x*1e6, y*1e6, abs.(E).^2, c=get_colormap(p[:Intensity_colormap]), sp=3)
+        Efield_plot = plots.series_list[plot_idx]        
+    end                
     plot_idx += 1        
     plot!(
-        xlims=([-1 1]*1e6*Lx/(2*p[:displayScaling])),
-        ylims=([-1 1]*1e6*Ly/(2*p[:displayScaling])),
+        xlims=([-1, 1]*1e6*Lx/(2*p[:displayScaling])),
+        ylims=([-1, 1]*1e6*Ly/(2*p[:displayScaling])),
         xlabel="x [μm]",
         ylabel="y [μm]",
-        title="Intensity [W/m^2]",
+        title="Intensity [W/m^2]",        
         legend=false,
         aspect_ratio=:equal,
         sp=3
     )    
     plot!(1e6.*[-p[:Lx_main], p[:Lx_main], p[:Lx_main], -p[:Lx_main], -p[:Lx_main]]/2,1e6.*[p[:Ly_main], p[:Ly_main], -p[:Ly_main], -p[:Ly_main], p[:Ly_main]]/2,c=:red,linestyle=:dash,sp=3)
     plot_idx += 1
-    if p[:noShapeOutline] == false && p[:taperScaling] == 1 && p[:twistRate] == 0
+    if haskey(p, :shapes) && (p[:noShapeOutline] == false && p[:taperScaling] == 1 && p[:twistRate] == 0)
         for iShape=1:size(p[:shapes])[1]
             if p[:shapes][iShape,4] <= 3
                 plot!(
@@ -277,7 +321,7 @@ function fdbpm!(p)
             plot_idx += 1
         end        
 
-        plot!(  xlims=(0, p[:z][end]*1e3),
+        plot!(  xlim=(0, p[:z][end]*1e3),
                 ylim=(1e-4, 2),
                 xlabel="Propagation distance [mm]",
                 ylabel="Mode overlaps",
@@ -288,13 +332,14 @@ function fdbpm!(p)
         if p[:downsampleImages]
             heatmap!(x_plot*1e6, y_plot*1e6, angle(E[ix_plot, iy_plot]), c=get_colormap(p[:Phase_colormap]), sp=4)
         else
-            heatmap!(x*1e6, y*1e6, angle.(E'), c=get_colormap(p[:Phase_colormap]), sp=4)
+            heatmap!(x*1e6, y*1e6, angle.(E), c=get_colormap(p[:Phase_colormap]), sp=4)
         end
-        phase_plot = plots.series_list[plot_idx]
-        phase_plot.plotattributes[:z] = angle.(E')
+        phase_plot = plots.series_list[plot_idx]        
         phase_plot.plotattributes[:background_color_inside] = 0.7*[1,1,1]    
         plot!(
             sp=4,
+            xlims=([-1, 1]*1e6*Lx/(2*p[:displayScaling])),
+            ylims=([-1, 1]*1e6*Ly/(2*p[:displayScaling])),
             clims=(-π,π),
             aspect_ratio=:equal,
             xlabel="x [μm]",
@@ -305,7 +350,7 @@ function fdbpm!(p)
         plot_idx += 1
         plot!(1e6.*[-p[:Lx_main], p[:Lx_main], p[:Lx_main], -p[:Lx_main], -p[:Lx_main]]/2,1e6.*[p[:Ly_main], p[:Ly_main], -p[:Ly_main], -p[:Ly_main], p[:Ly_main]]/2,c=:red,linestyle=:dash,sp=4)
         plot_idx += 1
-        if p[:noShapeOutline] == false && p[:taperScaling] == 1 && p[:twistRate] == 0
+        if haskey(p, :shapes) && (p[:noShapeOutline] == false && p[:taperScaling] == 1 && p[:twistRate] == 0)
             for iShape=1:size(p[:shapes])[1]
                 if p[:shapes][iShape,4] <= 3
                     plot!(
@@ -319,72 +364,101 @@ function fdbpm!(p)
                 end
             end
         end
-    end
-    display(plot!())
-    sleep(1.0)
-
+    end    
     if p[:saveVideo]
         frame(video)
     end
+
+    if haskey(p, :nFunc)
+        nFunc = p[:nFunc]
+    else
+        nFunc = nothing
+    end
+        
+    pp = PropagationParameters(
+        size(E)[2],
+        size(E)[1],
+        dx,
+        dy,
+        dz,
+        1,
+        zUpdateIdxs[1],
+        Float32((1-p[:taperScaling])/Nz),
+        Float32(p[:twistRate]*p[:Lz]/Nz),
+        d,        
+        p[:n_0],
+        convert.(ComplexF32, n),  
+        nFunc,       
+        E,
+        similar(E),
+        similar(E),
+        zeros(ComplexF32, size(n)),
+        zeros(ComplexF32, Threads.nthreads()*max(size(E)[1],size(E)[2])),
+        zeros(ComplexF32, Threads.nthreads()*max(size(E)[1],size(E)[2])),
+        zeros(ComplexF32, Threads.nthreads()*max(size(E)[1],size(E)[2])),
+        zeros(ComplexF32, Threads.nthreads()*max(size(E)[1],size(E)[2])),
+        multiplier,
+        similar(multiplier),
+        ax,
+        ay,
+        Float32(p[:rho_e]),
+        p[:bendingRoC],
+        sin(p[:bendDirection]/180*π),
+        cos(p[:bendDirection]/180*π),
+        p[:powers][end-length(zUpdateIdxs)],
+        0.0
+    ) 
     
-    prop_par = Dict(
-        :dx => convert(Float32, dx),
-        :dy => convert(Float32, dy),
-        :taperPerStep => Float32((1-p[:taperScaling])/Nz),
-        :twistPerStep => Float32(p[:twistRate]*p[:Lz]/Nz),
-        :shapes => convert.(Float32, real(p[:shapes])),
-        :shapeAbsorptions => convert.(Float32, real(shapeAbsorptions)),
-        :n_cladding => Float32(p[:n_cladding]),
-        :claddingAbsorption => Float32(real(claddingAbsorption)),
-        :multiplier => convert.(ComplexF32, multiplier),
-        :d => Float32(d),
-        :n_0 => Float32(p[:n_0]),
-        :ax => ComplexF32(ax),
-        :ay => ComplexF32(ay),        
-        :RoC => p[:bendingRoC],
-        :rho_e => Float32(p[:rho_e]),
-        :bendDirection => Float32(p[:bendDirection]),
-        :inputPrecisePower => p[:powers][end-length(zUpdateIdxs)]
-    )    
-    prop_par[:iz_start] = Int32(0)
-    prop_par[:iz_end] = Int32(zUpdateIdxs[1])
+    display(plot!())    
+    
+    #status information
+    status = Progress(length(zUpdateIdxs); dt=0.5, showspeed=true, barglyphs=BarGlyphs("[=> ]"), color=:cyan)   
+    if p[:updates] > 2
+        @info "Starting FD-BPM iteration..."
+    end
+
     for updidx=1:length(zUpdateIdxs)
         if updidx > 1
-            prop_par[:iz_start] = Int32(zUpdateIdxs[updidx-1])
-            prop_par[:iz_end] = Int32(zUpdateIdxs[updidx])
+            pp.iz_start = Int32(zUpdateIdxs[updidx-1])
+            pp.iz_end = Int32(zUpdateIdxs[updidx])
         end
-        E, n, precisePower = fdbpm_propagator(E, prop_par)
-        prop_par[:inputPrecisePower] = precisePower
-        p[:powers][end-length(zUpdateIdxs) + updidx] = precisePower
+
+        # iterate
+        fdbpm_propagator!(pp)  
         
+        p[:powers][end-length(zUpdateIdxs) + updidx] = pp.precisePower
+
         if p[:downsampleImages]
-            heatmap!(z=n[ix_plot, iy_plot],sp=1)
+            heatmap!(z=pp.n_out[ix_plot, iy_plot],sp=1)
         else
-            n_plot.plotattributes[:z] = n'
-            Efield_plot.plotattributes[:z] = abs.(E').^2
+            n_plot.plotattributes[:z] = Surface(real.(pp.n_out))
+            Efield_plot.plotattributes[:z] = Surface(abs.(pp.E2).^2)
             if (!p[:calcModeOverlaps])
-                phase_plot.plotattributes[:z] = angle.(E')
+                phase_plot.plotattributes[:z] = Surface(angle.(pp.E2))
             end
-        end
+        end        
         
         powers_plot.plotattributes[:y] = p[:powers]
         
-        p[:xzSlice][end][:,end-length(zUpdateIdxs)+updidx] = E[:, round(Int64,(Nx-1)/2+1)]
-        p[:yzSlice][end][:,end-length(zUpdateIdxs)+updidx] = E[round(Int64,(Ny-1)/2+1),:]
+        p[:xzSlice][end][:,end-length(zUpdateIdxs)+updidx] = pp.E2[round(Int64,(Ny-1)/2+1),:]
+        p[:yzSlice][end][:,end-length(zUpdateIdxs)+updidx] = pp.E2[:,round(Int64,(Nx-1)/2+1)]
 
         if p[:calcModeOverlaps]
             for iMode=1:nModes
-                p[:modeOverlaps][iMode,end-length(zUpdateIdxs)+updidx] = abs(sum(E.*conj(p[:modes][iMode][:field])))^2                
+                p[:modeOverlaps][iMode,end-length(zUpdateIdxs)+updidx] = abs(sum(pp.E2.*conj(p[:modes][iMode][:field])))^2                
                 mode_plots[iMode].plotattributes[:y] = p[:modeOverlaps][iMode,:]
             end
-        end
-
-        display(plot!())
-        sleep(0.01)     
+        end        
+        display(plot!())        
         
         if p[:saveVideo]
             frame(video)
         end
+        
+        # prepare next iteration
+        swap_pointers!(pp.E1, pp.E2)              
+
+        ProgressMeter.next!(status)
     end
 
     if p[:saveVideo]
@@ -395,19 +469,28 @@ function fdbpm!(p)
         end
     end
 
-    shapesFinal = p[:shapes]
-    shapesFinal[:,1] = p[:taperScaling]*(cos(p[:twistRate]*p[:Lz])*p[:shapes][:,1] - sin(p[:twistRate]*p[:Lz])*p[:shapes][:,2])
-    shapesFinal[:,2] = p[:taperScaling]*(sin(p[:twistRate]*p[:Lz])*p[:shapes][:,1] + cos(p[:twistRate]*p[:Lz])*p[:shapes][:,2])
-    #shapesFinal[:,3] = p[:taperScaling]*p[:shapes][:,3]
-    shapesFinal[:,3] = p[:shapes][:,3]
-    p[:shapes] = shapesFinal
+    if haskey(p, :shapes)
+        shapesFinal = p[:shapes]
+        shapesFinal[:,1] = p[:taperScaling]*(cos(p[:twistRate]*p[:Lz])*p[:shapes][:,1] - sin(p[:twistRate]*p[:Lz])*p[:shapes][:,2])
+        shapesFinal[:,2] = p[:taperScaling]*(sin(p[:twistRate]*p[:Lz])*p[:shapes][:,1] + cos(p[:twistRate]*p[:Lz])*p[:shapes][:,2])
+        shapesFinal[:,3] = p[:taperScaling]*p[:shapes][:,3]        
+        p[:shapes] = shapesFinal
+    end
     
     p[:E] = EField(
-        E,
+        pp.E2,
+        Lx,
+        Ly
+    )
+    p[:n] = RefractiveIndex(
+        pp.n_out,
         Lx,
         Ly
     )
 
-    p[:x] = x
-    p[:y] = y
+    p[:x] = x;
+    p[:y] = y;
+    if p[:updates] > 2
+        @info "FD-BPM iteration completed"
+    end
 end

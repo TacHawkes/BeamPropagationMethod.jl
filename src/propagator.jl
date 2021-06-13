@@ -1,307 +1,209 @@
-function substep1a(p)
+@inline function substep1a!(p)    
+    copyto!(p.E2, p.E1)
+
+    # branch-free implementation for increased performance
+    Threads.@threads for ix=2:(p.Nx-1)
+        @inbounds @simd for iy=2:(p.Ny-1)            
+            p.E2[iy,ix] +=  (p.E1[iy,ix-1] - p.E1[iy,ix])*p.ax +
+                            (p.E1[iy,ix+1] - p.E1[iy,ix])*p.ax +
+                            (p.E1[iy-1,ix] - p.E1[iy,ix])*p.ay*2.0f0 +
+                            (p.E1[iy+1,ix] - p.E1[iy,ix])*p.ay*2.0f0
+        end  
+        # iy edge cases (iy=1 or iy=p.Ny)           
+        p.E2[1,ix] +=   (p.E1[1,ix-1] - p.E1[1,ix])*p.ax +
+                        (p.E1[1,ix+1] - p.E1[1,ix])*p.ax +
+                        (p.E1[2,ix] - p.E1[1,ix])*p.ay*2.0f0
+        p.E2[p.Ny,ix] +=    (p.E1[p.Ny,ix-1] - p.E1[p.Ny,ix])*p.ax +
+                            (p.E1[p.Ny,ix+1] - p.E1[p.Ny,ix])*p.ax +
+                            (p.E1[p.Ny-1,ix] - p.E1[p.Ny,ix])*p.ay*2.0f0                    
+    end
+
+    @inbounds @simd for iy=2:(p.Ny-1)
+        # ix edge cases (ix=1 or ix=p.Nx)
+        p.E2[iy,1] +=   (p.E1[iy,2] - p.E1[iy,1])*p.ax +
+                        (p.E1[iy-1,1] - p.E1[iy,1])*p.ay*2.0f0 +
+                        (p.E1[iy+1,1] - p.E1[iy,1])*p.ay*2.0f0
+        p.E2[iy,p.Nx] +=    (p.E1[iy,p.Nx-1] - p.E1[iy,p.Nx])*p.ax +
+                            (p.E1[iy-1,1] - p.E1[iy,1])*p.ay*2.0f0 +
+                            (p.E1[iy+1,1] - p.E1[iy,1])*p.ay*2.0f0
+    end
+
+    # combined edge cases
+    p.E2[1,1] += (p.E1[1,2] - p.E1[1,1])*p.ax +                
+                 (p.E1[2,1] - p.E1[1,1])*p.ay*2.0f0    
+    p.E2[p.Ny,p.Nx] +=  (p.E1[p.Ny,p.Nx-1] - p.E1[p.Ny,p.Nx])*p.ax +                 
+                 (p.E1[p.Ny-1,p.Nx] - p.E1[p.Ny,p.Nx])*p.ay*2.0f0                 
+    p.E2[p.Ny,1] +=  (p.E1[p.Ny,2] - p.E1[p.Ny,1])*p.ax +
+                 (p.E1[p.Ny-1,1] - p.E1[p.Ny,1])*p.ay*2.0f0
+    p.E2[1,p.Nx] +=  (p.E1[1,p.Nx-1] - p.E1[1,p.Nx])*p.ax +                                  
+                 (p.E1[2,p.Nx] - p.E1[1,p.Nx])*p.ay*2.0f0              
+end
+
+@inline function substep1b!(p)    
     Threads.@threads for iy=1:p.Ny
-        for ix=1:p.Nx
-            p.E2[iy, ix] = p.E1[iy, ix]
-            if ix != 1
-                p.E2[iy, ix] += (p.E1[iy, ix-1] - p.E1[iy, ix])*p.ax
-            end
-            if ix != p.Nx
-                p.E2[iy,ix] += (p.E1[iy,ix+1] - p.E1[iy,ix])*p.ax
-            end
-            if iy != 1
-                p.E2[iy,ix] += (p.E1[iy-1,ix] - p.E1[iy,ix])*p.ay*2.0f0
-            end
-            if iy != p.Ny
-                p.E2[iy,ix] += (p.E1[iy+1,ix] - p.E1[iy,ix])*p.ay*2.0f0
-            end
+        tid = Threads.threadid()
+        @inbounds @simd for ix=2:p.Nx
+            ib = ix + (tid-1)*p.Nx              
+            p.E2[iy, ix] -= p.w1[ib]*p.E2[iy,ix-1]            
         end
+
+        # edge case ix=p.Nx
+        p.E2[iy,p.Nx] /= p.b1[p.Nx*tid]
+        @inbounds @simd for ix=(p.Nx-1):-1:1
+            p.E2[iy,ix] = (p.E2[iy,ix] + p.ax*p.E2[iy,ix+1])/p.b1[ix + (tid-1)*p.Nx]
+        end        
     end
 end
 
-function substep1b(p)        
-    Threads.@threads for iy=1:p.Ny
-        for ix=1:p.Nx
-            ib = ix + (Threads.threadid()-1)*p.Nx
-
-            p.b[ib] = 1
-            if (ix < p.Nx) 
-                p.b[ib] += p.ax
-            end
-            if (ix > 1)
-                p.b[ib] += p.ax
-                w = -p.ax/p.b[ib-1]
-                p.b[ib] += w*p.ax                
-                p.E2[iy, ix] -= w*p.E2[iy,ix - 1]
-            end
-        end
-
-        for ix=p.Nx:-1:1
-            ib = ix + (Threads.threadid()-1)*p.Nx            
-            p.E2[iy,ix] = (p.E2[iy,ix] + (ix == p.Nx ? 0 : p.ax*p.E2[iy,ix+1]))/p.b[ib]
-        end
-    end
-end
-
-
-function substep2a(p)
-    Threads.@threads for iy=1:p.Ny
-        for ix=1:p.Nx            
-            if (iy != 1)
-                p.E2[iy, ix] -= (p.E1[iy-1,ix] - p.E1[iy,ix])*p.ay
-            end
-            if (iy != p.Ny)
-                p.E2[iy,ix] -= (p.E1[iy+1,ix] - p.E1[iy,ix])*p.ay
-            end
-        end
-    end
-end
-
-function substep2b(p)
-    EfieldPowerThread = Threads.Atomic{Float64}(0.0)    
+@inline function substep2a!(p)
     Threads.@threads for ix=1:p.Nx
-        for iy=1:p.Ny
-            ib = iy + (Threads.threadid()-1)*p.Ny
-            p.b[ib] = 1
-            if (iy < p.Ny)
-                p.b[ib] += p.ay
-            end
-            if (iy > 1)
-                p.b[ib] += p.ay
-                w = -p.ay / p.b[ib-1]
-                p.b[ib] += w*p.ay                
-                p.E2[iy,ix] -= w*p.E2[iy-1,ix]
-            end
+        @inbounds @simd for iy=2:(p.Ny-1)
+            p.E2[iy,ix] -=  (p.E1[iy-1,ix] - p.E1[iy,ix])*p.ay +
+                            (p.E1[iy+1,ix] - p.E1[iy,ix])*p.ay            
         end
 
-        for iy=p.Ny:-1:1
-            ib = iy + (Threads.threadid()-1)*p.Ny            
-            p.E2[iy,ix] = (p.E2[iy,ix] + (iy == p.Ny ? 0 : p.ay*p.E2[iy+1,ix]))/p.b[ib]
-            Threads.atomic_add!(EfieldPowerThread, convert(Float64, real(p.E2[iy,ix])^2 + imag(p.E2[iy,ix])^2))
+        # edge cases iy=1 and iy=p.Ny    
+        p.E2[p.Ny,ix] -= (p.E1[p.Ny-1,ix] - p.E1[p.Ny,ix])*p.ay
+        p.E2[1,ix] -= (p.E1[2,ix] - p.E1[1,ix])*p.ay        
+    end    
+end
+
+@inline function substep2b!(p)      
+    Threads.@threads for ix=1:p.Nx
+        tid = Threads.threadid()
+        @inbounds @simd for iy=2:p.Ny
+            ib = iy + (tid-1)*p.Ny            
+            p.E2[iy,ix] -= p.w2[ib]*p.E2[iy-1,ix]            
         end
-    end
-    p.EfieldPower += EfieldPowerThread[]
+
+        # edge case iy=p.Ny
+        p.E2[p.Ny,ix] /= p.b2[p.Ny*tid]
+        @inbounds @simd for iy=(p.Ny-1):-1:1            
+            p.E2[iy,ix] = (p.E2[iy,ix] + p.ay*p.E2[iy+1,ix])/p.b2[iy + (tid-1)*p.Ny] 
+        end
+    end    
+    p.EfieldPower += field_power(p.E2)
 end
 
-function calcShapexyr(p, iz)
-    cosvalue = cos(p.twistPerStep*iz)
-    sinvalue = sin(p.twistPerStep*iz)
-    scaling = 1 - p.taperPerStep*iz
-    for iShape=1:p.Nshapes
-        p.shapexs_transformed[iShape] = scaling*(cosvalue*p.shapexs[iShape] - sinvalue*p.shapeys[iShape])
-        p.shapeys_transformed[iShape] = scaling*(sinvalue*p.shapexs[iShape] + cosvalue*p.shapeys[iShape])
-        p.shapeRs_transformed[iShape] =  p.shapeRs[iShape]
-    end
-end
+function apply_multiplier!(p, iz)    
+    fieldCorrection = √(p.precisePower/p.EfieldPower)    
+    cosvalue = cos(-p.twistPerStep*iz)
+    sinvalue = sin(-p.twistPerStep*iz)
+    scaling = 1/(1-p.taperPerStep*iz)    
+    Threads.@threads for ix=1:p.Nx
+        @inbounds @simd for iy=1:p.Ny
+            x = p.dx*((ix-1) - (p.Nx - 1)/2.0f0)
+            y = p.dy*((iy-1) - (p.Ny - 1)/2.0f0)
 
-function applyMultiplier(p, iz)
-    precisePowerDiffThread = Threads.Atomic{Float64}(0.0)
-    fieldCorrection = √(p.precisePower/p.EfieldPower)
-    if (p.taperPerStep != 0 || p.twistPerStep != 0)
-        Threads.@threads for i=1:p.Nx*p.Ny
-            ix = (i - 1) % p.Nx
-            x = p.dx*(ix - (p.Nx - 1)/2.0f0)
-            iy = (i - 1) ÷ p.Nx
-            y = p.dy*(iy - (p.Ny - 1)/2.0f0)
-
-            n = p.n_cladding
-            absorption = p.claddingAbsorption
-            for iShape=1:p.Nshapes
-                if p.shapeTypes[iShape] == 1
-                    if ((x - p.shapexs_transformed[iShape])^2 + (y - p.shapeys_transformed[iShape])^2 < (p.shapeRs_transformed[iShape])^2)
-                        n = p.shapeRIs[iShape]
-                        absorption = p.shapeAbsorptions[iShape]
-                    end
-                elseif p.shapeTypes[iShape] == 2
-                    delta = max(p.dx, p.dy)
-                    r_diff = √((x - p.shapexs_transformed[iShape])^2 + (y - p.shapeys_transformed[iShape])^2) - p.shapeRs_transformed[iShape] + delta/2.0f0
-                    if r_diff < 0
-                        n = p.shapeRIs[iShape]
-                        absorption = p.shapeAbsorptions[iShape]
-                    elseif r_diff < delta
-                        n = r_diff/delta * (p.n_cladding - p.shapeRIs[iShape]) + p.shapeRIs[iShape]
-                        absorption = r_diff/delta*(p.claddingAbsorption - p.shapeAbsorptions[iShape]) + p.shapeAbsorptions[iShape]
-                    end
-                elseif p.shapeTypes[iShape] == 3
-                    r_ratio_sqr = ((x - p.shapexs_transformed[iShape])^2 + (y - p.shapeys_transformed[iShape])^2)/(p.shapeRs_transformed[iShape])^2
-                    if r_ratio_sqr < 1
-                        n = r_ratio_sqr * (p.n_cladding - p.shapeRIs[iShape]) + p.shapeRIs[iShape]
-                        absorption = p.shapeAbsorptions[iShape]
-                    end
-                elseif p.shapeTypes[iShape] == 4
-                    r_ratio_sqr = ((x - p.shapexs_transformed[iShape])^2 + (y - p.shapeys_transformed[iShape])^2)/(p.shapeRs_transformed[iShape])^2
-                    r_abs = √((x - p.shapexs_transformed[iShape])^2 + (y - p.shapeys_transformed[iShape])^2)
-                    if r_ratio_sqr < 1
-                        n = 2*p.shapeRIs[iShape] * exp(p.shapegs[iShape]*r_abs) / (exp(2*p.shapegs[iShape]*r_abs)+1)
-                        absorption = p.shapeAbsorptions[iShape]
-                    end
-                elseif p.shapeTypes[iShape] == 5
-                    r_ratio_sqr = (y - p.shapeys_transformed[iShape])^2/(p.shapeRs_transformed[iShape])^2
-                    r_abs = y - p.shapeys_transformed[iShape]
-                    if r_ratio_sqr < 1
-                        n = 2*p.shapeRIs[iShape] * exp(p.shapegs[iShape]*r_abs) / (exp(2*p.shapegs[iShape]*r_abs)+1)
-                        absorption = p.shapeAbsorptions[iShape]
-                    end
-                end
+            n = zero(ComplexF32)
+            if p.taperPerStep != 0 || p.twistPerStep != 0
+                x_src = scaling*(cosvalue*x - sinvalue*y)
+                y_src = scaling*(sinvalue*x + cosvalue*y)
+                ix_src = min(max(0.0f0, x_src/p.dx + (p.Nx - 1)/2.0f0), (p.Nx - 1)*(1-eps(Float32)))
+                iy_src = min(max(0.0f0, y_src/p.dy + (p.Ny - 1)/2.0f0), (p.Ny - 1)*(1-eps(Float32)))
+                ix_low = floor(Int, ix_src) + 1
+                iy_low = floor(Int, iy_src) + 1
+                ix_frac = ix_src - floor(ix_src)
+                iy_frac = iy_src - floor(iy_src)                
+                n = p.n_in[iy_low, ix_low]*(1-ix_frac)*(1-iy_frac) +   
+                    p.n_in[iy_low, ix_low+1]*(ix_frac)*(1-iy_frac) +
+                    p.n_in[iy_low+1,ix_low]*(1-ix_frac)*(iy_frac) +
+                    p.n_in[iy_low+1,ix_low+1]*(ix_frac)*(iy_frac)
+            else
+                n = p.n_in[iy, ix]
             end
-            n_eff = n*(1-(n^2*(x*p.cosBendDirection+y*p.sinBendDirection)/2/p.RoC*p.rho_e))*exp((x*p.cosBendDirection+y*p.sinBendDirection)/p.RoC)
             if iz == p.iz_end
-                p.n_out[i] = n_eff
+                p.n_out[iy,ix] = n
+            end                    
+            n_eff = real(n)*(1-(real(n)^2*(x*p.cosBendDirection+y*p.sinBendDirection)/2/p.RoC*p.rho_e))*exp((x*p.cosBendDirection+y*p.sinBendDirection)/p.RoC)                        
+            a = p.multiplier[iy,ix]*exp(p.d*(imag(n) + (n_eff^2 - p.n_0^2)*im/(2*p.n_0)))
+            p.E2[iy,ix] *= fieldCorrection*a            
+            anormsqr = abs2(a)
+            if anormsqr > (1 - 10*eps(Float32))
+                anormsqr = 1
             end
-            p.E2[i] *= fieldCorrection*p.multiplier[i]*exp(im*p.d*(n_eff^2 - p.n_0^2))*absorption
-            multipliernormsqr = (real(p.multiplier[i])*absorption)^2 + (imag(p.multiplier[i])*absorption)^2
-            if multipliernormsqr > 1 - 10*eps(Float32)
-                multipliernormsqr = 1
-            end
-            Threads.atomic_add!(precisePowerDiffThread, convert(Float64, ((real(p.E2[i]))^2 + (imag(p.E2[i]))^2)*(1 - 1/multipliernormsqr)))
+            p.amultiplier[iy,ix] = anormsqr            
         end
-    else
-        Threads.@threads for i=1:(p.Nx*p.Ny)
-            p.E2[i] *= fieldCorrection * p.multiplier[i]
-            multipliernormsqr = real(p.multiplier[i])^2 + imag(p.multiplier[i])^2
-            if multipliernormsqr > 1 - 10*eps(Float32)
-                multipliernormsqr = 1
-            end
-            Threads.atomic_add!(precisePowerDiffThread, convert(Float64, ((real(p.E2[i]))^2 + (imag(p.E2[i]))^2)*(1 - 1/multipliernormsqr)))
-        end
-    end
+    end    
 
-    p.precisePower += precisePowerDiffThread[]
+    Esum = 0.0
+    @inbounds @simd for i in eachindex(p.E2)
+        Esum += abs2(p.E2[i])*(1 - 1/p.amultiplier[i])
+    end
+    p.precisePower += Esum
 end
 
-function swapEPointers(p, iz)
+function swap_field_pointers!(p, iz)
     if iz > p.iz_start
         temp = p.E1
         p.E1 = p.E2
-        p.E2 = temp
+        p.E2 = temp        
     elseif (p.iz_end - p.iz_start) % 2 != 0
         p.E1 = p.E2
-        p.E2 = Matrix{ComplexF32}(undef, p.Ny, p.Nx)
-    else
-        p.E1 = p.E2
-        p.E2 = p.Efinal
+        p.E2 = Matrix{ComplexF32}(undef, p.Ny, p.Nx)            
     end
 end
 
-function fdbpm_propagator(E, pd)   
-    multiplier = pd[:multiplier]  
-    p = PropagationParameters(
-        size(E)[2],
-        size(E)[1],
-        pd[:dx],
-        pd[:dy],
-        pd[:iz_start],
-        pd[:iz_end],
-        pd[:taperPerStep],
-        pd[:twistPerStep],
-        pd[:d],
-        pd[:n_cladding],
-        pd[:claddingAbsorption],
-        pd[:n_0],
-        size(pd[:shapes])[1],
-        pd[:shapes][:,1],
-        pd[:shapes][:,2],
-        pd[:shapes][:,3],
-        pd[:shapes][:,4],
-        pd[:shapes][:,5],
-        pd[:shapes][:,6],
-        pd[:shapeAbsorptions],
-        zeros(Float32, size(pd[:shapes])[1]),
-        zeros(Float32, size(pd[:shapes])[1]),
-        zeros(Float32, size(pd[:shapes])[1]),
-        similar(E),
-        E,
-        similar(E),
-        similar(E),
-        zeros(Float32, size(E)),
-        zeros(ComplexF32, Threads.nthreads()*max(size(E)[1],size(E)[2])),
-        similar(E),
-        pd[:ax],
-        pd[:ay],
-        pd[:rho_e],
-        pd[:RoC],
-        sin(pd[:bendDirection]/180*π),
-        cos(pd[:bendDirection]/180*π),
-        pd[:inputPrecisePower],
-        0.0
-    )
-    
-    if (p.taperPerStep != 0 || p.twistPerStep != 0)
-        for i=1:(p.Nx*p.Ny)
-            p.multiplier[i] = multiplier[i]
+transform_refractive_index!(n_func::WaveguideComponent, p, iz) = n_func(p, iz)
+transform_refractive_index!(::Nothing, vargs...) = nothing
+
+function initialize_bw!(p)
+    for tid=1:Threads.nthreads()
+        @inbounds for ix=1:p.Nx            
+            ib = ix + (tid-1)*p.Nx
+            p.b1[ib] = 1
+            if (ix < p.Nx) 
+                p.b1[ib] += p.ax
+            end
+            if (ix > 1)
+                p.b1[ib] += p.ax
+                p.w1[ib] = -p.ax/p.b1[ib-1]
+                p.b1[ib] += p.w1[ib]*p.ax            
+            end       
         end
-    else
-        for ix=1:p.Nx
-            x = p.dx * ((ix-1) - (p.Nx-1)/2.0f0)
-            for iy=1:p.Ny
-                y = p.dy * ((iy - 1) - (p.Ny-1)/2.0f0)
-                i = (ix-1)*p.Ny + iy
-                n = p.n_cladding
-                absorption = p.claddingAbsorption
-                for iShape=1:p.Nshapes
-                    if p.shapeTypes[iShape] == 1
-                        # step-index disk
-                        if ((x - p.shapexs[iShape])^2 + (y - p.shapeys[iShape])^2 < (p.shapeRs[iShape])^2)
-                            n = p.shapeRIs[iShape]
-                            absorption = p.shapeAbsorptions[iShape]
-                        end
-                    elseif p.shapeTypes[iShape] == 2
-                        # anti-aliased step-index disk
-                        delta = max(p.dx, p.dy)
-                        r_diff = √((x - p.shapexs[iShape])^2 + (y - p.shapeys[iShape])^2) - p.shapeRs[iShape] + delta / 2.0f0
-                        if r_diff < 0
-                            n = p.shapeRIs[iShape]
-                            absorption = p.shapeAbsorptions[iShape]
-                        elseif (r_diff < delta)
-                            n = r_diff / delta * (p.n_cladding - p.shapeRIs[iShape]) + p.shapeRIs[iShape]
-                            absorption = r_diff / delta * (p.claddingAbsorption - p.shapeAbsorptions[iShape]) + p.shapeAbsorptions[iShape]
-                        end
-                    elseif p.shapeTypes[iShape] == 3
-                        # parabolic graded index disk
-                        r_ratio_sqr = ((x - p.shapexs[iShape])^2 + (y - p.shapeys[iShape])^2)/(p.shapeRs[iShape])^2
-                        if r_ratio_sqr < 1
-                            n = r_ratio_sqr*(p.n_cladding - p.shapeRIs[iShape]) + p.shapeRIs[iShape]
-                            absorption = p.shapeAbsorptions[iShape]
-                        end
-                    elseif p.shapeTypes[iShape] == 4
-                        # 2D hyberbolic GRIN lens
-                        r_ratio_sqr = ((x - p.shapexs[iShape])^2 + (y - p.shapeys[iShape])^2)/(p.shapeRs[iShape])^2
-                        r_abs = √((x - p.shapexs[iShape])^2 + (y - p.shapeys[iShape])^2)
-                        if r_ratio_sqr < 1
-                            n = 2 * p.shapeRIs[iShape] * exp(p.shapegs[iShape]*r_abs) / (exp(2*p.shapegs[iShape]*r_abs) + 1)
-                            absorption = p.shapeAbsorptions[iShape]
-                        end
-                    elseif p.shapeTypes[iShape] == 5
-                        # 1D (y) hyperbolic GRIN lens
-                        r_ratio_sqr = (y - p.shapeys[iShape])^2 / (p.shapeRs[iShape])^2
-                        r_abs = y - p.shapeys[iShape]
-                        if r_ratio_sqr < 1
-                            n = 2 * p.shapeRIs[iShape] * exp(p.shapegs[iShape]*r_abs) / (exp(2*p.shapegs[iShape]*r_abs) + 1)
-                            absorption = p.shapeAbsorptions[iShape]
-                        end
-                    end
-                end
-                n_eff = n*(1-(n^2*(x*p.cosBendDirection + y*p.sinBendDirection)/2/p.RoC*p.rho_e))*exp((x*p.cosBendDirection+y*p.sinBendDirection)/p.RoC)
-                p.n_out[i] = n_eff                
-                p.multiplier[i] = multiplier[i]*exp(im*p.d*(n_eff^2 - p.n_0^2))*absorption                
+    
+        @inbounds for iy=1:p.Ny
+            ib = iy + (tid-1)*p.Ny
+            p.b2[ib] = 1
+            if (iy < p.Ny)
+                p.b2[ib] += p.ay
+            end
+            if (iy > 1)
+                p.b2[ib] += p.ay
+                p.w2[ib] = -p.ay / p.b2[ib-1]
+                p.b2[ib] += p.w2[ib]*p.ay                                        
             end
         end
     end
+end
 
-    p.EfieldPower = 0    
-    for iz=p.iz_start:p.iz_end        
-        substep1a(p)
-        substep1b(p)
-        substep2a(p)
-        substep2b(p)
-        if (p.taperPerStep != 0 || p.twistPerStep != 0)
-            calcShapexyr(p, iz)
-        end
-        applyMultiplier(p, iz)        
+"""
+    fdbpm_propagator!(p)
+
+Propagator function which translates the system a given number of z-steps.
+The `p` parameter is of type `PropagationParameters`.
+"""
+function fdbpm_propagator!(p)
+    # initial work
+    initialize_bw!(p)
+
+    for iz=p.iz_start:p.iz_end    
+        # transform refractive index
+        transform_refractive_index!(p.n_func, p, iz)
+
+        # perform DG-ADI steps    
+        substep1a!(p)
+        substep1b!(p)
+        substep2a!(p)
+        substep2b!(p)
+        # apply phase multiplier 
+        apply_multiplier!(p, iz)        
+        # reset the step power tracking
         p.EfieldPower = 0
 
-        if (iz + 1 < p.iz_end)
-            swapEPointers(p, iz)
-        end
+        # swap the E1/E2 pointers for the next iteration step
+        if (iz < p.iz_end)
+            swap_field_pointers!(p, iz)
+        end        
     end    
-    return p.Efinal, p.n_out, p.precisePower
 end

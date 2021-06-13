@@ -1,8 +1,8 @@
 function ndgrid(v1::AbstractVector{T}, v2::AbstractVector{T}) where T
     m, n = length(v1), length(v2)
-    v1 = reshape(v1, m, 1)
-    v2 = reshape(v2, 1, n)
-    (repeat(v1, 1, n), repeat(v2, m, 1))
+    v1 = reshape(v1, 1, m)
+    v2 = reshape(v2, n, 1)
+    (repeat(v1, n, 1), repeat(v2, 1, m))
 end
 
 function get_colormap(cmap::Int)
@@ -20,3 +20,19 @@ function get_colormap(cmap::Int)
 end
 
 get_colormap(cmap::Symbol) = cmap
+
+function swap_pointers!(a, b)
+    tmp = a
+    a = b
+    b = tmp
+end
+
+function field_power(x)
+    y = 0.0
+    @inbounds @simd for i in eachindex(x)
+        y += abs2(x[i])
+    end
+    return y
+end
+
+sigmoid(x) = 1-1/(1+exp(x))
