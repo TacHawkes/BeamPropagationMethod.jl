@@ -8,7 +8,7 @@
 
 This package is a implementation of [BPM-Matlab](https://gitlab.gbar.dtu.dk/biophotonics/BPM-Matlab) with some extensions and different routes.
 It is a numerical tool for electric field propagation in optical waveguide structures using the beam propagation method. For an in-depth explanation
-of the purpose and the math read the paper[^Veettikazhy2021] by the original BPM-Matlab authors.
+of the purpose and the math read the [paper by the original BPM-Matlab authors](https://doi.org/10.1364/OE.420493).
 The package is for the most part a direct reimplementation of the Matlab code, however there are some differences (see below). The most important benefit of this package is the pure Julia implementation. Therefore this package runs on any system which runs Julia 1.6. I have not performed an "scientific" benchmarks but replicating figure 1 of [^Veettikazhy2021] takes less than 30s on a i7-4850HQ with only a single update and 2 minutes with 50 updates, indicating that performance is limited by the visualization at the moment.
 
 The syntax for using `BeamPropagationMethod.jl` is very simlar to BPM-Matlab but had to be adapted for Julia specifics. Check the examples in order to get started. It might be worthwile to check the [BPM-Matlab Readme](https://gitlab.gbar.dtu.dk/biophotonics/BPM-Matlab/blob/Release/README.md) for an explanation of the structure.
@@ -56,4 +56,4 @@ As soon as I consider the package to be release ready, I will register it with t
 
 ## References
 
-[^Veettikazhy2021]: Madhu Veettikazhy, Anders Kragh Hansen, Dominik Marti, Stefan Mark Jensen, Anja Lykke Borre, Esben Ravn Andresen, Kishan Dholakia, and Peter Eskil Andersen, "BPM-Matlab: an open-source optical propagation simulation tool in MATLAB," Opt. Express 29, 11819-11832 (2021). [Link to article](https://doi.org/10.1364/OE.420493)
+Madhu Veettikazhy, Anders Kragh Hansen, Dominik Marti, Stefan Mark Jensen, Anja Lykke Borre, Esben Ravn Andresen, Kishan Dholakia, and Peter Eskil Andersen, "BPM-Matlab: an open-source optical propagation simulation tool in MATLAB," Opt. Express 29, 11819-11832 (2021). [Link to article](https://doi.org/10.1364/OE.420493)
