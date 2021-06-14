@@ -12,6 +12,9 @@ makedocs(
     ),
     pages=[
         "Introduction" => "index.md"        
+        "Examples" => [
+            "Simple multimode fiber" => "examples/example1.md"
+        ]
     ],
 )
 

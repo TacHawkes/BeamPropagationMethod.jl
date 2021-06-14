@@ -1,7 +1,7 @@
 """
     fdbpm!(p)
 
-Performs an interative finite-differnece beam propagation simulation of the optical environment specified
+Performs an interative finite-difference beam propagation simulation of the optical environment specified
 in `p` using the Douglas-Gunn alternating direction implicit algorithm (DG-ADI). The `p` parameter is a Dict
 containing the fields specified in TODO.
 """
