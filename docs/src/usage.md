@@ -2,12 +2,12 @@
 
 Central to the propagation is a parameters dictionary which is setup at the beginning and can be reused to chain multiple propagation segments together. It is possible to change parameters in between segments.
 
-The dictionary should be of the type `Dict{Symbol,Any}`.
+The dictionary should be of the type `Dict{Symbol,Any}`. It is recommended to look at the first example ([Simple multimode fiber](@ref)) to get a first idea how to use the dictionary.
 
 ## General parameters
 
 * `:name` - A descriptive name for the model (currently unused)
-* `:useGPU`- Reserved for future use of `CUDA.jl``
+* `:useGPU`- Reserved for future use of `CUDA.jl`
 
 ## Visualization parameters
 
