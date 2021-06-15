@@ -11,7 +11,8 @@ makedocs(
         assets=String[],
     ),
     pages=[
-        "Introduction" => "index.md"        
+        "Introduction" => "index.md",
+        "Usage" => "usage.md",               
         "Examples" => [
             "Simple multimode fiber" => "examples/example1.md"
         ]

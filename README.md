@@ -4,6 +4,11 @@
 [![Build Status](https://ci.appveyor.com/api/projects/status/github/TacHawkes/BeamPropagationMethod.jl?svg=true)](https://ci.appveyor.com/project/TacHawkes/BeamPropagationMethod-jl)
 [![Coverage](https://codecov.io/gh/TacHawkes/BeamPropagationMethod.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/TacHawkes/BeamPropagationMethod.jl)
 
+# Documentation
+
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://tachawkes.github.io/BeamPropagationMethod.jl/dev)
+
+
 # Introduction
 
 This package is a implementation of [BPM-Matlab](https://gitlab.gbar.dtu.dk/biophotonics/BPM-Matlab) with some extensions and different routes.
@@ -39,7 +44,7 @@ This program is free software: you can redistribute it and/or modify it under th
 
 This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-You should have received a copy of the GNU General Public License along with this program. If not, see [https://www.gnu.org/licenses/].
+You should have received a copy of the GNU General Public License along with this program. If not, see [https://www.gnu.org/licenses/](https://www.gnu.org/licenses/).
 
 ## Citation
 
