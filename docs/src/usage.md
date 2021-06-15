@@ -29,8 +29,8 @@ The dictionary should be of the type `Dict{Symbol,Any}`. It is recommended to lo
 * `n_0` - The refractive index of the Helmholtz-equation. This should be chosed as the refractive index where the majority of the energy is propagating (i.e. close to the core refractive index).
 * `L_z` - The length of the simulation segment in meters
 * `shapes` - This is a 2D array which allows a simple way to define a refractive index distribution with a circular shape. Note that more sophisticated refractiv index profiles can be supplied directly using the `n` parameter or the `nFunc` parameter, where non-trivial transforming profiles (i.e. splitters/couplers, Mach-Zehnder modulators or photonic lanterns) can be simulated. The `shapes` matrix is structured as follows: The first column is the `x` coordinate and the second column the `y` coordinate. The radius of the circular core is defined in the third column. Column 4 is used to define the type of the shape. Column 5 is the refractive index of the shape and column 6 is the g parameter of gradient index (GRIN) lenses. The following shape types are supported:
-    * 1. Circular step-index disk
-    * 2. Anti-aliased circular step-index disk
-    * 3. Parabolic graded index disk
-    * 4. GRIN lens focusing in x- and y-direction
-    * 5. GRIN lens focusing only in the y-direction
+    1. Circular step-index disk
+    2. Anti-aliased circular step-index disk
+    3. Parabolic graded index disk
+    4. GRIN lens focusing in x- and y-direction
+    5. GRIN lens focusing only in the y-direction
