@@ -1,8 +1,7 @@
 module BeamPropagationMethod
 
 using Printf: Threads
-using   Arpack,
-        BenchmarkTools,
+using   Arpack,        
         FFTW,
         Interpolations, 
         LinearAlgebra,        
