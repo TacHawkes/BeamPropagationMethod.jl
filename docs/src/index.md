@@ -24,7 +24,7 @@ The syntax for using `BeamPropagationMethod.jl` is very simlar to BPM-Matlab but
 Install the package using the package manager:
 
 ```julia
-] add BeamPropagationMethod
+] add https://github.com/TacHawkes/BeamPropagationMethod.jl
 ```
 
 ## License
@@ -33,7 +33,7 @@ This program is free software: you can redistribute it and/or modify it under th
 
 This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-You should have received a copy of the GNU General Public License along with this program. If not, see https://www.gnu.org/licenses/.
+You should have received a copy of the GNU General Public License along with this program. If not, see [https://www.gnu.org/licenses/].
 
 ## Citation
 
