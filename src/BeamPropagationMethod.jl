@@ -1,18 +1,20 @@
 module BeamPropagationMethod
 
 using Printf: Threads
-using   Arpack,        
+using   Arpack,
         FFTW,
-        Interpolations, 
-        LinearAlgebra,        
-        Plots,
+        CairoMakie,
+        Dates,
+        Interpolations,
+        LinearAlgebra,
         ProgressMeter,
-        Printf, 
+        Printf,
         SparseArrays
 
 include("types.jl")
+include("field.jl")
+include("model.jl")
 include("util.jl")
-include("components.jl")
 include("propagator.jl")
 include("modes.jl")
 include("fd_bpm.jl")
