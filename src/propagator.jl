@@ -1,4 +1,4 @@
-function substep1a!(p)
+function substep1a!(p::Parameters)
     copyto!(p.E2, p.E1)
     x_is_anti_symm = p.xsymmetry == AntiSymmetric
     y_is_anti_symm = p.ysymmetry == AntiSymmetric
@@ -12,11 +12,10 @@ function substep1a!(p)
                             (p.E1[ix,iy+1] - p.E1[ix,iy])*p.ay*2.0f0
         end
         # ix edge cases (ix=1 or ix=p.Nx)
-        if !y_is_anti_symm
-            p.E2[1,iy] +=   ifelse(!y_is_anti_symm, (p.E1[2,iy] - p.E1[1,iy])*p.ax, zero(eltype(p.E1))) +
-                            (p.E1[1,iy-1] - p.E1[1,iy])*p.ay*2.0f0 +
-                            (p.E1[1,iy+1] - p.E1[1,iy])*p.ay*2.0f0
-        end
+        p.E2[1,iy] +=   ifelse(!y_is_anti_symm, (p.E1[2,iy] - p.E1[1,iy])*p.ax, zero(eltype(p.E1))) +
+                        (p.E1[1,iy-1] - p.E1[1,iy])*p.ay*2.0f0 +
+                        (p.E1[1,iy+1] - p.E1[1,iy])*p.ay*2.0f0
+
         p.E2[p.nx,iy] +=    (p.E1[p.nx-1,iy] - p.E1[p.nx,iy])*p.ax +
                             (p.E1[1,iy-1] - p.E1[1,iy])*p.ay*2.0f0 +
                             (p.E1[1,iy+1] - p.E1[1,iy])*p.ay*2.0f0
@@ -58,7 +57,7 @@ function substep1b!(p::Parameters)
     end
 end
 
-function substep2a!(p)
+function substep2a!(p::Parameters)
     x_is_anti_symm = p.xsymmetry == AntiSymmetric
     Threads.@threads for iy in 2:p.ny-1
         for ix in 1:p.nx
@@ -91,7 +90,6 @@ function substep2b!(p::Parameters)
 end
 
 function apply_multiplier!(p::Parameters, iz)
-    precise_power_diff_thread = 0.0f0
     field_correction = √(p.precise_power/p.E_field_power)
     cosvalue = cos(-p.twist_per_step*iz)
     sinvalue = sin(-p.twist_per_step*iz)
@@ -153,14 +151,14 @@ function apply_multiplier!(p::Parameters, iz)
     p.precise_power_diff += Esum
 end
 
-function swap_field_pointers!(p, iz)
+function swap_field_pointers!(p::Parameters, iz)
     if iz > p.iz_start
         temp = p.E1
         p.E1 = p.E2
         p.E2 = temp
     elseif (p.iz_end - p.iz_start) % 2 != 0
         p.E1 = p.E2
-        p.E2 = Matrix{ComplexF32}(undef, p.ny, p.nx)
+        p.E2 = Matrix{ComplexF32}(undef, p.nx, p.ny)
     else
         p.E1 = p.E2
         p.E2 = p.Efinal

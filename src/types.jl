@@ -74,7 +74,7 @@ Base.@kwdef mutable struct Model
     E::ElectricFieldProfile = ElectricFieldProfile()
 
     # internals
-    modes::ElectricFieldProfile = ElectricFieldProfile()
+    modes::Vector{ElectricFieldProfile} = ElectricFieldProfile[]
     prior_data::Bool = false
     z::Vector{Float64} = Vector{Float64}(undef, 0)
     powers::Vector{Float64} = Vector{Float64}(undef, 0)

@@ -1,217 +1,4 @@
 """
-    find_modes!(p, nModes, singleCoreModes, sortByLoss, plotModes)
-
-A mode-solver which finds the eigenmodes of the given shape/refractive index geometry as 
-given in `p`.
-"""
-function find_modes!(p, nModes, singleCoreModes, sortByLoss, plotModes)
-    if haskey(p, :n_cladding)
-        error("Error: n_cladding has been renamed n_background")
-    end
-    if (haskey(p, :nFunc) && haskey(p, :shapes))
-        error("You must specify exactly one of the fields 'shapes' and 'nFunc'")
-    end
-    get!(p, :nParameters, Dict())
-    get!(p, :rho_e, 0.22)
-    get!(p, :bendingRoC, Inf)
-    get!(p, :bendDirection, 0)
-    get!(p, :Intensity_colormap, 1)
-    get!(p, :Phase_colormap, 3)
-
-    k0 = 2π/p[:lambda]
-    dx = p[:Lx_main] / p[:Nx_main]
-    dy = p[:Ly_main] / p[:Ny_main]
-
-    targetLx = p[:padfactor]*p[:Lx_main]
-    targetLy = p[:padfactor]*p[:Ly_main]
-
-    Nx = round(Int64, targetLx/dx)
-    if Nx % 2 != p[:Nx_main] % 2
-        Nx += 1
-    end
-    Ny = round(Int64, targetLy/dy)
-    if Ny % 2 != p[:Ny_main] % 2
-        Ny += 1
-    end
-
-    Lx = Nx*dx
-    Ly = Ny*dy    
-
-    x = dx*(-(Nx-1)/2:(Nx-1)/2)
-    y = dy*(-(Ny-1)/2:(Ny-1)/2)    
-    X, Y = ndgrid(x, y)        
-
-    # init plot    
-    if plotModes
-        plots = plot(
-            layout=nModes,
-            size=(1000, 800),
-            framestyle=:box
-        )
-    end    
-
-    V = []
-    D = []
-
-    if !haskey(p, :shapes)
-        shapesToInclude_2Darray = 1
-    elseif singleCoreModes
-        shapesToInclude_2Darray = (1:size(p[:shapes], 1))'
-    else
-        shapesToInclude_2Darray = 1:size(p[:shapes], 1)
-    end
-
-    dz = 1e-10
-
-    @info "Finding modes..."
-    for iModeFinderRun = 1:size(shapesToInclude_2Darray, 1)
-        n = p[:n_background]*ones(Nx, Ny)
-        if haskey(p, :shapes)
-            n = p[:n_background] * ones(Float32, Nx, Ny)
-            for iShape = 1:size(p[:shapes], 1)
-                if p[:shapes][iShape,4] == 1
-                    n[@. ((X - p[:shapes][iShape,1])^2 + (Y - p[:shapes][iShape,2])^2 < p[:shapes][iShape,3]^2)] .= p[:shapes][iShape,5]
-                elseif p[:shapes][iShape,4] == 2
-                    delta = max(dx, dy)                              
-                    r_diff = @. √((X - p[:shapes][iShape,1])^2 + (Y - p[:shapes][iShape,2])^2) - p[:shapes][iShape,3] + delta/2                
-                    n[r_diff .< 0] .= p[:shapes][iShape,5]
-                    n[(r_diff .>= 0) .& (r_diff .< delta)] = @. r_diff[(r_diff >= 0) & (r_diff < delta)]/delta*(p[:n_background] - p[:shapes][iShape,5]) + p[:shapes][iShape,5]
-                elseif p[:shapes][iShape,4] == 3
-                    r_ratio_sqr = @. ((X - p[:shapes][iShape,1])^2 + (Y - p[:shapes][iShape,2])^2)/p[:shapes][iShape,3]^2
-                    n[r_ratio_sqr .< 1] = r_ratio_sqr[r_ratio_sqr .< 1] *(p[:n_background] - p[:shapes][iShape,5]) .+ p[:shapes][iShape,5]
-                elseif p[:shapes][iShape,4] == 4
-                    r = @. √((X - p[:shapes][iShape,1])^2 + (Y - p[:shapes][iShape,2])^2)
-                    n[r .< p[:shapes][iShape,3]] = p[:shapes][iShape,5]*sech.(p[:shapes][iShape,6]*r[r .< p[:shapes][iShape,3]])
-                elseif p[:shapes][iShape,4] == 5
-                    r = @. abs(Y - p[:shapes][iShape,2])
-                    n[r .< p[:shapes][iShape,3]] = p[:shapes][iShape,5]*sech.(p[:shapes][iShape,6]*r[r .< p[:shapes][iShape,3]])
-                end
-            end
-        elseif isa(p[:n], Function)
-            n = convert.(Float32, p[:n](X,Y,p[:n_background],p[:nParameters]))
-        else
-            Nx_source, Ny_source = size(p[:n].n)        
-            dx_source = p[:n].Lx/Nx_source
-            dy_source = p[:n].Ly/Ny_source
-            x_source = dx_source*(-(Nx_source - 1)/2:(Nx_source-1)/2)
-            y_source = dy_source*(-(Ny_source - 1)/2:(Ny_source-1)/2)        
-            itp = Interpolations.interpolate((x_source, y_source), p[:n].n, Gridded(Linear()))
-            n = convert.(Float32, itp.(X, Y))
-        end 
-        
-        n_eff = @. real(n)*(1-(real(n)^2*(X*cosd(p[:bendDirection]) + Y*sind(p[:bendDirection]))*p[:rho_e]/(2*p[:bendingRoC]))).*exp((X*cosd(p[:bendDirection]) + Y * sind(p[:bendDirection]))/p[:bendingRoC])        
-        
-        delta_n_2 = @. real(n_eff)^2 - p[:n_0]^2
-        
-        absorber = @. exp(-dz*(max(0, max(abs(Y) - p[:Ly_main]/2, abs(X) - p[:Lx_main]/2))^2 *p[:alpha] + 2π*imag(n)/p[:lambda]))        
-        # deliberate symmetry breaking to find the e/o modes aligned to the x/y grid
-        ax = @. 1.00001*dz/(dx^2*2im*k0*p[:n_0])
-        ay = @. dz/(dy^2*2im*k0*p[:n_0])
-        
-        N = Nx*Ny
-        # matrix C
-        M_rhs = sparse(1:N, 1:N, absorber[1:N] + delta_n_2[1:N]*dz*k0/(2im*p[:n_0]),N,N) +
-                sparse(1:N-1,2:N,vec([repeat([fill(ax,1,Nx-1) 0],1,Ny-1) fill(ax,1,Nx-1)]),N,N) +
-                sparse(2:N,1:N-1,vec([repeat([fill(ax,1,Nx-1) 0],1,Ny-1) fill(ax,1,Nx-1)]),N,N) +
-                sparse(1:N-Nx,1+Nx:N,ay,N,N) +
-                sparse(1+Nx:N,1:N-Nx,ay,N,N)        
-        M_rhs[1:N+1:N*N] = M_rhs[1:N+1:N*N] - vec(repeat([ax fill(2*ax,1,Nx-2) ax],1,Ny))
-        M_rhs[1:N+1:N*N] = M_rhs[1:N+1:N*N] - vec([fill(ay,1,Nx) fill(2*ay,1,Nx*(Ny-2)) fill(ay,1,Nx)])
-        absorberdiag = sparse(1:N,1:N,absorber[1:N],N,N)
-        M_rhs = M_rhs*absorberdiag
-        
-        Drun, Vrun = eigs(M_rhs; nev=ceil(Int, nModes/size(shapesToInclude_2Darray,1)), sigma=1.0, ncv=nModes*10)
-        if iModeFinderRun == 1
-            V = Vrun
-            D = Drun
-        else
-            V = [V Vrun]
-            D = [D Drun]
-        end        
-    end    
-    @info "Done"
-    if sortByLoss
-        sortedidx = sortperm(vec(real.(D)); rev=true)
-    else
-        sortedidx = sortperm(vec(imag.(D)))
-    end        
-    p[:modes] = Vector{Dict}(undef, nModes)
-    
-    for iMode=1:nModes
-        p[:modes][iMode] = Dict{Symbol,Any}()  
-        p[:modes][iMode][:Lx] = Lx
-        p[:modes][iMode][:Ly] = Ly        
-        E = reshape(V[:,sortedidx[iMode]], (Nx, Ny))
-        p[:modes][iMode][:field] = E.*exp(-im*angle(maximum(abs.(E))))
-        p[:modes][iMode][:eigenval] = D[sortedidx[iMode]]
-        if haskey(p, :shapes) && (isinf(p[:bendingRoC]) && (size(p[:shapes],1) == 1 || singleCoreModes))
-            iMax = argmax(abs.(E))
-            xMax = X[iMax]
-            yMax = Y[iMax]
-            theta = atan(yMax -p[:shapes][1,2], xMax - p[:shapes][1,1])
-            itp = Interpolations.LinearInterpolation((x, y), E'; extrapolation_bc=Line())
-            radialE = itp.(p[:shapes][1,1] .+ LinRange(0, max(Lx, Ly), 1000)*cos(theta), p[:shapes][1,2] .+ LinRange(0, max(Lx,Ly), 1000)*sin(theta))
-            radialEpruned = radialE[abs.(radialE) .> 0.01*maximum(abs.(radialE))]
-            m = sum(abs.(diff(angle.(radialEpruned) .> 0))) + 1
-
-            R = √((xMax - p[:shapes][1,1])^2 + (yMax - p[:shapes][1,2])^2)            
-            azimuthalE = itp.(p[:shapes][1,1] .+ R*cos.(theta .+ LinRange(0,2π,1000)),p[:shapes][1,2] .+ R*sin.(theta .+ LinRange(0, 2π, 1000)))
-            azimuthalEpruned = azimuthalE[abs.(azimuthalE) .> 0.01*maximum(abs.(azimuthalE))]
-            l = sum(abs.(diff(angle.(azimuthalEpruned) .> 0))) / 2
-
-            if l > 0
-                Emaxmirrored = Interpolations.interpolate((x, y), E', Gridded(Linear()))
-                Emaxmirrored = Emaxmirrored(xMax, 2*p[:shapes][1,2] - yMax)
-                if (real(E[iMax]/Emaxmirrored)) < 0
-                    parity = "o"
-                else
-                    parity = "e"
-                end
-            else
-                parity = ""
-            end
-            p[:modes][iMode][:label] = @sprintf("Mode %d, %s%d%d%s", iMode, "LP", l, m, parity)
-        else
-            p[:modes][iMode][:label] = @sprintf("Mode %d", iMode)
-        end
-        if plotModes
-            mode_loss = -10*log10(real(D[sortedidx[iMode]]))/dz
-            heatmap!(
-                x*1e6, y*1e6, abs.(E').^2,
-                aspect_ration=:equal,
-                c=get_colormap(p[:Intensity_colormap]),
-                colorbar=false,
-                aspect_ratio=:equal,
-                sp=iMode,
-                title=p[:modes][iMode][:label],
-                xlims=([-1, 1]*1e6*Lx/(2)),
-                ylims=([-1, 1]*1e6*Ly/(2)),
-            )
-            annotate!((minimum(x)*1e6, maximum(y)*1e6, Plots.text(@sprintf("%.2f dB/m loss", mode_loss), 10, :white, :top, :left)), sp=iMode)
-            annotate!((minimum(x)*1e6, minimum(y)*1e6, Plots.text(@sprintf("eigenvalue-1=%.3e", (real(D[sortedidx[iMode]]) - 1)), 10, :white, :bottom, :left)), sp=iMode)
-            for iShape=1:size(p[:shapes], 1)
-                if (p[:shapes][iShape,4]) <= 3
-                    plot!(
-                        1e6*(p[:shapes][iShape,1] .+ p[:shapes][iShape,3].*cos.(LinRange(0,2π,100))),
-                        1e6*(p[:shapes][iShape,2] .+ p[:shapes][iShape,3].*sin.(LinRange(0,2π,100))),
-                        color=:white,
-                        linestyle=:dash,
-                        legend=false,
-                        sp=iMode
-                    )
-                end
-            end            
-            # TODO: Complete and adapt to Plots.jl with a single figure
-        end
-    end
-
-    if plotModes
-        display(plot!())
-        sleep(0.01)
-    end
-end
-
-"""
     mode_superposition(p, modeidxs, coeffs=ones(prod(size(modeidxs)), 1))
 
 Calculates and returns a mode superposition of the pre-calulcated eigenmodes with the indices
@@ -222,10 +9,298 @@ function mode_superposition(p, modeidxs, coeffs=ones(prod(size(modeidxs)), 1))
         zeros(ComplexF32, size(p[:modes][1][:field])),
         p[:modes][modeidxs[1]][:Lx],
         p[:modes][modeidxs[1]][:Ly],
-    )    
+    )
     for modeIdx=1:prod(size(modeidxs))
         out.field += coeffs[modeIdx]*p[:modes][modeidxs[modeIdx]][:field]
     end
 
     return out
+end
+
+function find_cores(n, n_background)
+    A = (single.(n) .!= single(n_background))
+
+    nx, ny = size(A)
+
+    B = zeros(nx,ny)
+    n = 0
+    for ix in 1:nx
+        on = false
+        for iy in 1:ny
+            if !on && A[ix, iy]
+                n += 1
+                B[ix, iy] = n
+                on = true
+            elseif on && A[ix, iy]
+                B[ix, iy] = n
+            elseif on && !A[ix, iy]
+                on = false
+            end
+        end
+    end
+
+    for iy in 1:ny
+        for ix=2:nx
+            if B[ix, iy] && B[ix-1,iy]
+                B[B .== B[ix,iy]] .= B[ix-1,iy]
+            end
+        end
+    end
+
+   ic = indexin(unique(B), B)
+
+   return reshape(ic .- 1, size(B))
+end
+
+function test_radial_symmetry(x,y,n,nbackground,xsymmetry,ysymmetry)
+    n = n .- nbackground
+
+    if ysymmetry != NoSymmetry
+        x_c = 0
+    else
+        x_c = 0
+        for j in eachindex(y)
+            for i in eachindex(x)
+                x_c += x[i] * abs2(n[i,j])
+            end
+        end
+        x_c /= sum(abs.(n))
+    end
+    if xsymmetry != NoSymmetry
+        y_c = 0
+    else
+        y_c = 0
+        for j in eachindex(y)
+            for i in eachindex(x)
+                y_c += y[j] * abs2(n[i,j])
+            end
+        end
+        y_c /= sum(abs.(n))
+    end
+
+    R = Matrix{Float64}(undef, length(x), length(y))
+    for j in eachindex(y)
+        for i in eachindex(x)
+            R[i,j] = √((x[i] - x_c)^2 .+ (y[j] - y_c)^2)
+        end
+    end
+    sort_idxs = sortperm(R[:])
+    nsorted = n[sort_idxs]
+
+    monotonicity_real = sign.(diff(real(nsorted)))
+    reversals_real = sum(abs.(diff(monotonicity_real[monotonicity_real .!= 0])/2))
+    monotonicity_imag = sign.(diff(imag(nsorted)))
+    reversals_imag = sum(abs.(diff(monotonicity_imag[monotonicity_imag .!= 0])/2))
+
+    return reversals_real < 5 && reversals_imag < 5, x_c, y_c
+end
+
+function find_modes!(m::Model, n_modes; single_core_modes=false, sort_by_loss=false, plot_modes=true)
+    if ((m.xsymmetry != NoSymmetry && !isinf(m.bending_radius_of_curvature) && sind(m.bend_direction) != 0.0)
+        || (m.ysymmetry != NoSymmetry) && !isinf(m.bending_radius_of_curvature) && cosd(m.bend_direction) != 0.0)
+        @error("The specified bending direction is inconsistent with the symmetry assumption")
+    end
+
+    _dx = dx(m)
+    _dy = dy(m)
+    _nx = nx(m)
+    _ny = ny(m)
+    _lx = lx(m)
+    _ly = ly(m)
+    _x = x(m)
+    _y = y(m)
+
+    N = _nx * _ny
+    if n_modes >= N - 1
+        @error("Error: The number of modes requested must be less than the pixels in the full simulation window minus one.")
+    end
+
+    k0 = 2π/m.λ
+
+    @info "Finding modes"
+    tstart = time()
+
+    nx_source, ny_source, nz_source = size(m.n.n)
+    dx_source = m.n.lx / nx_source
+    dy_source = m.n.ly / ny_source
+    x_source = get_grid_array(nx_source, dx_source, m.n.xsymmetry)
+    y_source = get_grid_array(ny_source, dy_source, m.n.ysymmetry)
+    x_source, y_source, n_source = calc_full_refractive_index(x_source, y_source, m.n.n)
+    itp = Interpolations.LinearInterpolation((x_source, y_source), @view(n_source[:,:,1]); extrapolation_bc=m.nbackground)
+    n = Array{eltype(n_source), 2}(undef, length(_x), length(_y))
+    for j in eachindex(_y)
+        for i in eachindex(_x)
+            n[i,j] = itp(_x[i], _y[j])
+        end
+    end
+
+    anycomplex = !isreal(n)
+
+    if single_core_modes
+        core_idxs = find_cores(n, m.nbackground)
+    else
+        core_idxs = ones(size(n))
+    end
+
+    n_cores = maximum(core_idxs)
+    m.modes = ElectricFieldProfile[]
+    i_mode = 0
+    for i_core in 1:n_cores
+        n_core = n
+        n_core[core_idxs .!= i_core] .= m.nbackground
+
+        if !isfinite(m.bending_radius_of_curvature)
+            radially_symmetric, x_c, y_c = test_radial_symmetry(
+                _x,
+                _y,
+                n_core,
+                m.nbackground,
+                m.xsymmetry,
+                m.ysymmetry
+                )
+        else
+            radially_symmetric = false
+        end
+
+        n_core_bent = Matrix{Float64}(undef, length(_x), length(_y))
+        for j in eachindex(_y)
+            for i in eachindex(_x)
+                n_core_bent[i, j] = real(n_core[i,j]) * (1 - (real(n_core[i,j])^2 *
+                                    (_x[i]*cosd(m.bend_direction) + _y[j]*sind(m.bend_direction)) *
+                                    m.ρe / (2*m.bending_radius_of_curvature))) *
+                                    exp((_x[i]*cosd(m.bend_direction) + _y[j]*sind(m.bend_direction))/m.bending_radius_of_curvature)
+
+            end
+        end
+
+        delta_n_2 = n_core_bent.^2 .- m.n0^2
+
+        dz = 1e-10
+        x_edge = m.lx_main * (1 + Int(m.ysymmetry != NoSymmetry))/2
+        y_edge = m.ly_main * (1 + Int(m.xsymmetry != NoSymmetry))/2
+        absorber = Matrix{ComplexF64}(undef, length(_x), length(_y))
+        for j in eachindex(_y)
+            for i in eachindex(_x)
+                absorber[i, j] = exp(-dz * (max(0, max(0, max(abs(_y[j]) - y_edge, abs(_x[i]) - x_edge)))^2*m.alpha + 2π*imag(n_core[i,j])/m.λ))
+            end
+        end
+        ax = 1.00001*dz/(_dx^2*2im*k0*m.n0)
+        ay = dz/(_dy^2*2im*k0*m.n0)
+
+        M_rhs = sparse(1:N, 1:N, absorber[1:N] + delta_n_2[1:N]*dz*k0/(2im*m.n0),N,N) +
+                sparse(1:N-1,2:N,vec([repeat([fill(ax,1,_nx-1) 0],1,_ny-1) fill(ax,1,_nx-1)]),N,N) +
+                sparse(2:N,1:N-1,vec([repeat([fill(ax,1,_nx-1) 0],1,_ny-1) fill(ax,1,_nx-1)]),N,N) +
+                sparse(1:N-_nx,1+_nx:N,ay,N,N) +
+                sparse(1+_nx:N,1:N-_nx,ay,N,N)
+        M_rhs[1:N+1:N*N] = M_rhs[1:N+1:N*N] - vec(repeat([ax fill(2*ax,1,_nx-2) ax],1,_ny))
+        M_rhs[1:N+1:N*N] = M_rhs[1:N+1:N*N] - vec([fill(ay,1,_nx) fill(2*ay,1,_nx*(_ny-2)) fill(ay,1,_nx)])
+        absorberdiag = sparse(1:N,1:N,absorber[1:N],N,N)
+        M_rhs = M_rhs*absorberdiag
+
+        if m.xsymmetry == AntiSymmetric
+            M_rhs[1:N+1:N*_nx] .= 0
+            M_rhs[N*_nx:N+1:2*N*_nx] .= 0
+        end
+        if m.ysymmetry == AntiSymmetric
+            M_rhs[1:((N+1)*_nx):end] .= 0
+            M_rhs[N:((N+1)*_nx):end] .= 0
+        end
+
+        D, V = eigs(M_rhs; nev=ceil(Int, n_modes/n_cores), sigma=1.0, ncv=min(N,ceil(Int,n_modes/n_cores)*10))
+#        D = diagm(D)
+
+        κ = @. (1 - real(D))/dz * m.λ/(4π)
+        realn = @. √(m.n0^2 - 2*m.n0*imag(D/(dz*k0)))
+
+        neff = realn[realn .> m.nbackground] + im*κ[realn .> m.nbackground]
+        V = V[:,realn .> m.nbackground]
+        D = D[realn .> m.nbackground]
+
+        for i_core_mode = 1:length(D)
+            i_mode += 1
+            mode = ElectricFieldProfile(
+                lx=_lx,
+                ly=_ly,
+                xsymmetry=m.xsymmetry,
+                ysymmetry=m.ysymmetry
+            )
+            E = reshape(V[:,i_core_mode], _nx, _ny)
+            E = @. E * exp(-im*angle(maximum(E)))
+            mode.field = E
+            if anycomplex
+                mode.n_effective = neff[i_core_mode]
+            else
+                mode.n_effective = real(neff[i_core_mode])
+            end
+
+            if radially_symmetric
+                x_full, y_full, E_full = calc_full_field(_x, _y, E)
+                i_max = argmax(E_full)
+                x_max = x_full[i_max[1]]
+                y_max = x_full[i_max[2]]
+                θ = atan(y_max - y_c, x_max - x_c)
+                itp = Interpolations.LinearInterpolation((x_full, y_full), E_full; extrapolation_bc=Line())
+                radialE = itp.(x_c .+ LinRange(0, max(Lx, Ly), 1000)*cos(θ), y_c .+ LinRange(0, max(Lx,Ly), 1000)*sin(θ))
+                radialEpruned = radialE[abs.(radialE) .> 0.01*maximum(abs.(radialE))]
+                m = sum(abs.(diff(angle.(radialEpruned*exp(im*π/2)) .> 0))) + 1
+
+                R = √((x_max - x_c)^2 + (y_max - y_c)^2)
+                azimuthalE = itp.(x_c .+ R*cos.(θ .+ LinRange(0,2π,1000)),y_c .+ R*sin.(θ .+ LinRange(0, 2π, 1000)))
+                azimuthalEpruned = azimuthalE[abs.(azimuthalE) .> 0.01*maximum(abs.(azimuthalE))]
+                l = sum(abs.(diff(angle.(azimuthalEpruned*exp(im*π/2)) .> 0))) / 2
+
+                if l > 0
+                    Emaxmirrored = itp(x_max, 2*y_c - y_max)
+                    if real(E_full[i_max]/Emaxmirrored) < 0
+                        parity = 'o'
+                    else
+                        parity = 'e'
+                    end
+                else
+                    parity = ' '
+                end
+                mode.label = ", LP$l$m$parity"
+            end
+
+            push!(m.modes, mode)
+        end
+    end
+
+    if isempty(m.modes)
+        @info "Done, $dt seconds elapsed. No guided modes found."
+        return
+    end
+
+    if sort_by_loss
+        sorted_idxs = sortperm(imag([m.n_effective for m in m.modes]))
+    else
+        sorted_idxs = sortperm(real([m.n_effective for m in m.modes]); rev=true)
+    end
+
+    m.modes = m.modes[sorted_idxs[1:min(length(m.modes), n_modes)]]
+
+    tstop = time()
+    dt = round(tstop - tstart, digits=2)
+    @info "Done, $dt seconds elapsed. $(length(m.modes)) guided modes found."
+
+    figs = Figure[]
+    for i_mode in eachindex(m.modes)
+        m.modes[i_mode].label = "Mode $i_mode $(m.modes[i_mode].label)"
+        if plot_modes
+            E = m.modes[i_mode].field
+
+
+            fig = Figure()
+
+            ax = fig[1,1] = Axis(fig, aspect=DataAspect())
+            heatmap!(_x, _y, abs2.(E))
+
+            ax = fig[1,2] = Axis(fig, aspect=DataAspect())
+            heatmap!(_x, _y, angle.(E), colorrange=(-π,π))
+
+            push!(figs, fig)
+        end
+    end
+
+    figs
 end
