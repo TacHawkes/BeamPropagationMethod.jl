@@ -57,8 +57,8 @@ function fd_bpm!(m::Model)
     E_norm = sum(abs2.(E)/power_fraction)
     E .*= √(E_source_norm / E_norm)
 
-    m.ysymmetry == AntiSymmetric && (E[x .== 0, :] .= zero(eltype(E)))
-    m.xsymmetry == AntiSymmetric && (E[:, y .== 0] .= zero(eltype(E)))
+    m.ysymmetry == AntiSymmetric && (E[_x .== 0, :] .= zero(eltype(E)))
+    m.xsymmetry == AntiSymmetric && (E[:, _y .== 0] .= zero(eltype(E)))
 
     # refractive index init
     dz_n = 0

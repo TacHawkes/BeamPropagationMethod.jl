@@ -34,20 +34,20 @@ function calc_full_field(x, y, E)
     if sign(minimum(x)) == -1
         # no op
     elseif sign(minimum(x)) == 0
-        x = cat(-reverse(x[2:end]; dims=2), x; dims=2)
+        x = cat(-reverse(x[2:end]; dims=1), x; dims=1)
         E = cat(-reverse(E[2:end,:]; dims=1), E; dims=1)
     elseif sign(minimum(x)) == 1
-        x = cat(-reverse(x; dims=2), x; dims=2)
+        x = cat(-reverse(x; dims=1), x; dims=1)
         E = cat(reverse(E; dims=1), E; dims=1)
     end
 
     if sign(minimum(y)) == -1
         # no op
     elseif sign(minimum(y)) == 0
-        y = cat(-reverse(y[2:end]; dims=2), y; dims=2)
+        y = cat(-reverse(y[2:end]; dims=1), y; dims=1)
         E = cat(-reverse(E[2:end,:]; dims=2), E; dims=2)
     elseif sign(minimum(y)) == 1
-        y = cat(-reverse(y; dims=2), y; dims=2)
+        y = cat(-reverse(y; dims=1), y; dims=1)
         E = cat(reverse(E; dims=2), E; dims=2)
     end
 
@@ -58,20 +58,20 @@ function calc_full_refractive_index(x, y, n)
     if sign(minimum(x)) == -1
         # no op
     elseif sign(minimum(x)) == 0
-        x = cat(-reverse(x[2:end]; dims=2), x; dims=2)
+        x = cat(-reverse(x[2:end]; dims=1), x; dims=1)
         n = cat(reverse(n[2:end,:,:]; dims=1), n; dims=1)
     elseif sign(minimum(x)) == 1
-        x = cat(-reverse(x; dims=2), x; dims=2)
+        x = cat(-reverse(x; dims=1), x; dims=1)
         n = cat(reverse(n; dims=1), n; dims=1)
     end
 
     if sign(minimum(y)) == -1
         # no op
     elseif sign(minimum(y)) == 0
-        y = cat(-reverse(y[2:end]; dims=2), y; dims=2)
+        y = cat(-reverse(y[2:end]; dims=1), y; dims=1)
         n = cat(reverse(n[2:end,:,:]; dims=2), n; dims=2)
     elseif sign(minimum(y)) == 1
-        y = cat(-reverse(y; dims=2), y; dims=2)
+        y = cat(-reverse(y; dims=1), y; dims=1)
         n = cat(reverse(n; dims=2), n; dims=2)
     end
 
