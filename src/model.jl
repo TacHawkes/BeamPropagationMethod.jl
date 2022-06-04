@@ -54,3 +54,11 @@ function trim_refractive_index(n, nbackground)
 
     return n
 end
+
+function finalize_video!(m, out_file="")
+    if isempty(out_file)
+        out_file = joinpath(pwd(), m.name * ".mp4")
+    end
+
+    save(out_file, m.video_stream)
+end

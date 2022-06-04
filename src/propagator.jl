@@ -222,7 +222,7 @@ function fdbpm_propagator!(p)
         p.E_field_power = zero(typeof(p.E_field_power))
 
         # swap the E1/E2 pointers for the next iteration step
-        if (iz < p.iz_end)
+        if iz < p.iz_end
             swap_field_pointers!(p, iz)
         end
         update_precise_power!(p)

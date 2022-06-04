@@ -17,7 +17,7 @@ Thumbs.db
 .vscode
 /Manifest.toml
 /src/tools
-/examples
+*.mp4
 
 test/
 !test/runtests.jl

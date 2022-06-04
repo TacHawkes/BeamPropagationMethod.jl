@@ -4,14 +4,17 @@
 Calculates and returns a mode superposition of the pre-calulcated eigenmodes with the indices
 given by `modeidxs`. The superposition coefficients (may be complex) can be passed using the `coeffs` parameter.
 """
-function mode_superposition(p, modeidxs, coeffs=ones(prod(size(modeidxs)), 1))
-    out = EField(
-        zeros(ComplexF32, size(p[:modes][1][:field])),
-        p[:modes][modeidxs[1]][:Lx],
-        p[:modes][modeidxs[1]][:Ly],
+function mode_superposition(m, mode_idxs, coeffs=ones(prod(size(mode_idxs)), 1))
+    out = ElectricFieldProfile(
+        lx = m.modes[mode_idxs[1]].lx,
+        ly = m.modes[mode_idxs[1]].ly,
+        field = m.modes[mode_idxs[1]].field,
+        xsymmetry = lx = m.modes[mode_idxs[1]].xsymmetry,
+        ysymmetry = lx = m.modes[mode_idxs[1]].ysymmetry,
     )
-    for modeIdx=1:prod(size(modeidxs))
-        out.field += coeffs[modeIdx]*p[:modes][modeidxs[modeIdx]][:field]
+
+    for mode_idx in 1:length(mode_idxs)
+        out.field += coeffs[mode_idx]*m.modes[mode_idx].field
     end
 
     return out
@@ -78,12 +81,8 @@ function test_radial_symmetry(x,y,n,nbackground,xsymmetry,ysymmetry)
         y_c /= sum(abs.(n))
     end
 
-    R = Matrix{Float64}(undef, length(x), length(y))
-    for j in eachindex(y)
-        for i in eachindex(x)
-            R[i,j] = √((x[i] - x_c)^2 .+ (y[j] - y_c)^2)
-        end
-    end
+    R_f(xi,yj) = √((xi - x_c)^2 + (yj - y_c)^2)
+    R = [R_f(xi, yj) for (xi, yj) in Iterators.product(x,y)]
     sort_idxs = sortperm(R[:])
     nsorted = n[sort_idxs]
 
@@ -123,16 +122,11 @@ function find_modes!(m::Model, n_modes; single_core_modes=false, sort_by_loss=fa
     nx_source, ny_source, nz_source = size(m.n.n)
     dx_source = m.n.lx / nx_source
     dy_source = m.n.ly / ny_source
-    x_source = get_grid_array(nx_source, dx_source, m.n.xsymmetry)
-    y_source = get_grid_array(ny_source, dy_source, m.n.ysymmetry)
+    x_source = get_grid_array(nx_source, dx_source, m.n.ysymmetry)
+    y_source = get_grid_array(ny_source, dy_source, m.n.xsymmetry)
     x_source, y_source, n_source = calc_full_refractive_index(x_source, y_source, m.n.n)
     itp = Interpolations.LinearInterpolation((x_source, y_source), @view(n_source[:,:,1]); extrapolation_bc=m.nbackground)
-    n = Array{eltype(n_source), 2}(undef, length(_x), length(_y))
-    for j in eachindex(_y)
-        for i in eachindex(_x)
-            n[i,j] = itp(_x[i], _y[j])
-        end
-    end
+    n = [itp(xi, yj) for (xi, yj) in Iterators.product(_x, _y)]
 
     anycomplex = !isreal(n)
 
@@ -207,7 +201,6 @@ function find_modes!(m::Model, n_modes; single_core_modes=false, sort_by_loss=fa
         end
 
         D, V = eigs(M_rhs; nev=ceil(Int, n_modes/n_cores), sigma=1.0, ncv=min(N,ceil(Int,n_modes/n_cores)*10))
-#        D = diagm(D)
 
         κ = @. (1 - real(D))/dz * m.λ/(4π)
         realn = @. √(m.n0^2 - 2*m.n0*imag(D/(dz*k0)))
@@ -266,6 +259,8 @@ function find_modes!(m::Model, n_modes; single_core_modes=false, sort_by_loss=fa
         end
     end
 
+    tstop = time()
+    dt = round(tstop - tstart, digits=2)
     if isempty(m.modes)
         @info "Done, $dt seconds elapsed. No guided modes found."
         return
@@ -279,8 +274,6 @@ function find_modes!(m::Model, n_modes; single_core_modes=false, sort_by_loss=fa
 
     m.modes = m.modes[sorted_idxs[1:min(length(m.modes), n_modes)]]
 
-    tstop = time()
-    dt = round(tstop - tstart, digits=2)
     @info "Done, $dt seconds elapsed. $(length(m.modes)) guided modes found."
 
     figs = Figure[]

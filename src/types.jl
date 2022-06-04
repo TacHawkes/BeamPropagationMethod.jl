@@ -31,10 +31,11 @@ Base.@kwdef mutable struct Model
     plot_field_max::Float64 = 0.0
     plot_zoom::Float64 = 1.0
     store_field_3D::Bool = false
-    save_video::Bool = false
+    save_video::Bool = true
+    video_stream::Union{VideoStream, Nothing} = nothing
     intensity_colormap::Symbol = :viridis
-    phase_colormap::Symbol = :hsv
-    refractive_index_colormap::Symbol = :viridis
+    phase_colormap::Symbol = :balance
+    refractive_index_colormap::Symbol = :inferno
     refractive_index_colorrange::Tuple{Int, Int} = (1, 0)
     calc_mode_overlaps::Bool = false
     disable_stepsize_warning::Bool = false

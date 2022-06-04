@@ -13,7 +13,6 @@ function fd_bpm!(m::Model)
         @error("The specified bending direction is inconsistent with the symmetry assumption")
     end
 
-
     k0 = 2π/m.λ
 
     _dx = dx(m)
@@ -137,7 +136,15 @@ function fd_bpm!(m::Model)
     end
 
     # visualisation
-    m.fig = Figure()
+    if isnothing(m.fig)
+        m.fig = Figure()
+    else
+        empty!(m.fig)
+    end
+
+    if m.save_video && isnothing(m.video_stream)
+        m.video_stream = VideoStream(m.fig; framerate=10)
+    end
 
     xlimits = ([-1 1] .+ Int(m.ysymmetry != NoSymmetry)) .* _lx/(2*m.plot_zoom)
     ylimits = ([-1 1] .+ Int(m.xsymmetry != NoSymmetry)) .* _ly/(2*m.plot_zoom)
@@ -158,22 +165,22 @@ function fd_bpm!(m::Model)
 
     # TODO: Axis options
     axis1 = m.fig[1,1][1,1] = Axis(m.fig,
-                            xlabel="x [m]",
-                            ylabel="y [m]",
+                            xlabel="x [μm]",
+                            ylabel="y [μm]",
                             title="Real part of refractive index",
                             aspect=DataAspect(),
-                            limits=Tuple([xlimits ylimits])
+                            limits=Tuple(1e6.*[xlimits ylimits])
     )
     ri_data = Observable(real(n_slice[ix_plot, iy_plot]))
 
     hm1a = heatmap!(
         axis1,
-        x_plot,
-        y_plot,
+        x_plot*1e6,
+        y_plot*1e6,
         ri_data,
         colormap=m.refractive_index_colormap
     )
-    Colorbar(m.fig[1,1][1,2], hm1a)
+    Colorbar(m.fig[1,1][1,2], hm1a, tickformat="{:.3f}", ticks=LinearTicks(5))
 
     if m.xsymmetry != NoSymmetry
         y0idx = 1
@@ -209,48 +216,52 @@ function fd_bpm!(m::Model)
     end
 
     axis2 = m.fig[1,2] = Axis(m.fig,
-        xlabel="Propagation distance [m]",
+        xlabel="Propagation distance [mm]",
         ylabel="Relative power remaining"
     )
-    power_plot_data = Observable([Point2f(x_i,y_i) for (x_i, y_i) in zip(m.z, m.powers)])
+    power_plot_data = Observable([Point2f(x_i,y_i) for (x_i, y_i) in zip(m.z*1e3, m.powers)])
     plot2 = lines!(axis2, power_plot_data, linewidth=2)
-    xlims!(axis2, 0, m.z[end])
+    xlims!(axis2, 0, m.z[end]*1e3)
     ylims!(axis2, 0, 1.1)
 
     axis3 = m.fig[2,1][1,1] = Axis(m.fig,
-                                    xlabel="x [m]",
-                                    ylabel="y [m]",
-                                    title="Intensity [W/m^2]",
+                                    xlabel="x [μm]",
+                                    ylabel="y [μm]",
+                                    title="Intensity [W/cm^2]",
                                     aspect=DataAspect(),
-                                    limits=Tuple([xlimits ylimits])
+                                    limits=Tuple(1e6.*[xlimits ylimits])
     )
-    field_plot_data = Observable(abs2.(E[ix_plot,iy_plot]))
+    field_plot_data = Observable(abs2.(E[ix_plot,iy_plot]).*1e4)
     hm3a = heatmap!(axis3,
-                    x_plot,
-                    y_plot,
+                    x_plot*1e6,
+                    y_plot*1e6,
                     field_plot_data,
-                    colorrange=(m.plot_field_max > 0.0 ? (0, m.plot_field_max*maximum(abs2.(E))) : CairoMakie.Makie.Automatic())
+                    colormap=m.intensity_colormap,
+                    colorrange=(m.plot_field_max > 0.0 ? (0, 1e4*m.plot_field_max*maximum(abs2.(E))) : CairoMakie.Makie.Automatic())
     )
-    lines!(axis3, vec(redline_x), vec(redline_y), color=:red, linestyle=:dash)
-    Colorbar(m.fig[2,1][1,2], hm3a)
+    lines!(axis3, vec(redline_x), vec(redline_y), color=:red, linestyle=:dash, linewidth=2)
+    Colorbar(m.fig[2,1][1,2], hm3a, tickformat="{:.3f}", ticks=LinearTicks(5))
 
     axis4 = m.fig[2,2][1,1] = Axis(m.fig,
-                                    xlabel="x [m]",
-                                    ylabel="x [m]",
+                                    xlabel="x [μm]",
+                                    ylabel="x [μm]",
                                     title="Phase [rad]",
-                                    limits=Tuple([xlimits ylimits]),
+                                    limits=Tuple(1e6.*[xlimits ylimits]),
                                     aspect=DataAspect()
 
     )
     maxE0 = maximum(abs.(E))
     phase_plot_data = Observable(angle.(E[ix_plot, iy_plot]))
+    alpha_data = max.(0, @. (1 + log10(abs(E[ix_plot,iy_plot]/maxE0)^2)/3))
+
     hm3b = heatmap!(axis4,
-                    x_plot,
-                    y_plot,
+                    x_plot*1e6,
+                    y_plot*1e6,
                     phase_plot_data,
+                    colormap=m.phase_colormap,
                     colorrange=(-π,π)
     )
-
+    Colorbar(m.fig[2,2][1,2], hm3b,ticks=(-π:π:π, ["-π", "0", "π"]))
     p = Parameters(;
             m,
             dx=_dx,
@@ -289,8 +300,11 @@ function fd_bpm!(m::Model)
             iz_start=1,
             iz_end=z_update_idxs[1]
     )
+    !isempty(m.fig_title) && Label(m.fig[0, :], text=m.fig_title)
     display(m.fig)
-    for updidx in eachindex(z_update_idxs)
+    return
+    recordframe!(m.video_stream)
+    @showprogress "Calculating beam propagation..." for updidx in eachindex(z_update_idxs)
         if updidx > 1
             p.iz_start = z_update_idxs[updidx-1]
             p.iz_end = z_update_idxs[updidx]
@@ -303,16 +317,14 @@ function fd_bpm!(m::Model)
 
         # update observables
         ri_data[] = real(p.n_out[ix_plot, iy_plot])
-        field_plot_data[] = abs2.(p.E2[ix_plot,iy_plot])
+        field_plot_data[] = abs2.(p.E2[ix_plot,iy_plot]).*1e4
         phase_plot_data[] = angle.(p.E2[ix_plot, iy_plot])
-        power_plot_data[][end-length(z_update_idxs) + updidx] = Point2f(m.z[end-length(z_update_idxs) + updidx], m.powers[end-length(z_update_idxs) + updidx])
+        power_plot_data[][end-length(z_update_idxs) + updidx] = Point2f(m.z[end-length(z_update_idxs) + updidx]*1e3, m.powers[end-length(z_update_idxs) + updidx])
 
-        display(m.fig)
-        sleep(0.001)
+        recordframe!(m.video_stream)
 
         swap_pointers!(p.E1, p.E2)
         # TODO store E3D
-
     end
 
     m.E.lx = lx(m)
@@ -328,4 +340,5 @@ function fd_bpm!(m::Model)
     m.n.ysymmetry = m.ysymmetry
 
     m.prior_data = true
+    display(m.fig)
 end

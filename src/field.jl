@@ -27,8 +27,8 @@ nz(m::Model) = max(m.updates, round(Int, m.lz/m.dz_target))
 lx(m::Model) = dx(m) * nx(m)
 ly(m::Model) = dy(m) * ny(m)
 
-x(m::Model) = get_grid_array(nx(m), dx(m), m.xsymmetry)
-y(m::Model) = get_grid_array(ny(m), dy(m), m.ysymmetry)
+x(m::Model) = get_grid_array(nx(m), dx(m), m.ysymmetry)
+y(m::Model) = get_grid_array(ny(m), dy(m), m.xsymmetry)
 
 function calc_full_field(x, y, E)
     if sign(minimum(x)) == -1
@@ -45,7 +45,7 @@ function calc_full_field(x, y, E)
         # no op
     elseif sign(minimum(y)) == 0
         y = cat(-reverse(y[2:end]; dims=1), y; dims=1)
-        E = cat(-reverse(E[2:end,:]; dims=2), E; dims=2)
+        E = cat(-reverse(E[:,2:end]; dims=2), E; dims=2)
     elseif sign(minimum(y)) == 1
         y = cat(-reverse(y; dims=1), y; dims=1)
         E = cat(reverse(E; dims=2), E; dims=2)
@@ -69,7 +69,7 @@ function calc_full_refractive_index(x, y, n)
         # no op
     elseif sign(minimum(y)) == 0
         y = cat(-reverse(y[2:end]; dims=1), y; dims=1)
-        n = cat(reverse(n[2:end,:,:]; dims=2), n; dims=2)
+        n = cat(reverse(n[:,2:end,:]; dims=2), n; dims=2)
     elseif sign(minimum(y)) == 1
         y = cat(-reverse(y; dims=1), y; dims=1)
         n = cat(reverse(n; dims=2), n; dims=2)
