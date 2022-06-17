@@ -95,14 +95,14 @@ m.E = BeamPropagationMethod.mode_superposition(m, 1:4)
 BeamPropagationMethod.fd_bpm!(m)
 
 ##
-BeamPropagationMethod.initialize_refractive_index!(m, calcRI)
-BeamPropagationMethod.initialize_electric_field!(m, calcInitialE)
 m.xsymmetry = BeamPropagationMethod.NoSymmetry
 m.ysymmetry = BeamPropagationMethod.NoSymmetry
 m.lx_main = 20e-6
 m.nx_main = 200
 m.ly_main = 20e-6
 m.ny_main = 200
+BeamPropagationMethod.initialize_refractive_index!(m, calcRI)
+m.E = BeamPropagationMethod.mode_superposition(m, 1:4)
 
 ##
 BeamPropagationMethod.fd_bpm!(m)

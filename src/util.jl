@@ -1,10 +1,3 @@
-function ndgrid(v1::AbstractVector{T}, v2::AbstractVector{T}) where T
-    m, n = length(v1), length(v2)
-    v1 = reshape(v1, 1, m)
-    v2 = reshape(v2, n, 1)
-    (repeat(v1, n, 1), repeat(v2, 1, m))
-end
-
 function get_grid_array(nx, dx, symmetry)
     if symmetry == NoSymmetry
         x = dx*(-nx/2+1/2:nx/2-1/2)
@@ -16,22 +9,6 @@ function get_grid_array(nx, dx, symmetry)
 
     return x
 end
-
-function get_colormap(cmap::Int)
-    if cmap == 1
-        return :inferno
-    elseif cmap == 2
-        return :jet
-    elseif cmap == 3
-        return :balance
-    elseif cmap == 4
-        return :gray
-    elseif cmap == 5
-        return :cividis
-    end
-end
-
-get_colormap(cmap::Symbol) = cmap
 
 function swap_pointers!(a, b)
     tmp = a

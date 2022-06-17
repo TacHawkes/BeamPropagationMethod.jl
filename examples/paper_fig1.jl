@@ -6,6 +6,7 @@ m = BeamPropagationMethod.Model()
 m.name = @__FILE__
 m.use_all_cpus = false
 m.use_gpu = false
+m.store_field_3D = true
 
 # visualisation
 m.updates = 50

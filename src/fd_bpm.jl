@@ -149,19 +149,7 @@ function fd_bpm!(m::Model)
     xlimits = ([-1 1] .+ Int(m.ysymmetry != NoSymmetry)) .* _lx/(2*m.plot_zoom)
     ylimits = ([-1 1] .+ Int(m.xsymmetry != NoSymmetry)) .* _ly/(2*m.plot_zoom)
 
-    if m.xsymmetry != NoSymmetry && m.ysymmetry != NoSymmetry
-        redline_x = [0 m.lx_main m.lx_main]
-        redline_y = [m.ly_main m.ly_main 0]
-    elseif m.xsymmetry != NoSymmetry
-        redline_x = [-m.lx_main -m.lx_main m.lx_main m.lx_main]
-        redline_y = [0 m.ly_main m.ly_main 0]
-    elseif m.ysymmetry != NoSymmetry
-        redline_x = [0 m.lx_main m.lx_main 0]
-        redline_y = [-m.ly_main -m.ly_main m.ly_main m.ly_main]
-    else
-        redline_x = [-m.lx_main m.lx_main m.lx_main -m.lx_main]
-        redline_y = [m.ly_main m.ly_main -m.ly_main -m.ly_main]
-    end
+    redline_x, redline_y = redlines(m::Model)
 
     # TODO: Axis options
     axis1 = m.fig[1,1][1,1] = Axis(m.fig,
@@ -182,42 +170,13 @@ function fd_bpm!(m::Model)
     )
     Colorbar(m.fig[1,1][1,2], hm1a, tickformat="{:.3f}", ticks=LinearTicks(5))
 
-    if m.xsymmetry != NoSymmetry
-        y0idx = 1
-    else
-        y0idx = round(Int, (_ny-1)/2+1)
-    end
-    if m.ysymmetry != NoSymmetry
-        x0idx = 1
-    else
-        x0idx = round(Int, (_nx-1)/2+1)
-    end
-
-    if m.prior_data
-        m.powers = [m.powers;vec(fill(NaN, m.updates))]
-        push!(m.xzslice, fill(complex(NaN32), _nx, m.updates))
-        push!(m.yzslice, fill(complex(NaN32), _ny, m.updates))
-    else
-        m.powers = fill(NaN, m.updates + 1)
-        m.powers[1] = 1
-        m.xzslice = [fill(complex(NaN32), _nx, m.updates+1)]
-        m.yzslice = [fill(complex(NaN32), _ny, m.updates+1)]
-        m.xzslice[1][:,1] = E[:,y0idx]
-        m.yzslice[1][:,1] = E[x0idx,:]
-    end
-
-    if m.store_field_3D
-        if m.prior_data
-            push!(m.E3D, fill(complex(NaN32), _nx, _ny, m.updates))
-        else
-            m.E3D = [fill(complex(NaN32), _nx, _ny, m.updates+1)]
-            m.E3D[1][:,:,1] = E
-        end
-    end
+    update_stored_fields!(m, _nx, _ny, E)
 
     axis2 = m.fig[1,2] = Axis(m.fig,
         xlabel="Propagation distance [mm]",
-        ylabel="Relative power remaining"
+        ylabel="Relative power remaining",
+        yminorticksvisible = true,
+        yminorgridvisible = true
     )
     power_plot_data = Observable([Point2f(x_i,y_i) for (x_i, y_i) in zip(m.z*1e3, m.powers)])
     plot2 = lines!(axis2, power_plot_data, linewidth=2)
@@ -251,8 +210,10 @@ function fd_bpm!(m::Model)
 
     )
     maxE0 = maximum(abs.(E))
-    phase_plot_data = Observable(angle.(E[ix_plot, iy_plot]))
     alpha_data = max.(0, @. (1 + log10(abs(E[ix_plot,iy_plot]/maxE0)^2)/3))
+    Φ = angle.(E[ix_plot, iy_plot])
+    Φ[alpha_data .== 0] .= NaN
+    phase_plot_data = Observable(Φ)
 
     hm3b = heatmap!(axis4,
                     x_plot*1e6,
@@ -301,9 +262,11 @@ function fd_bpm!(m::Model)
             iz_end=z_update_idxs[1]
     )
     !isempty(m.fig_title) && Label(m.fig[0, :], text=m.fig_title)
+    trim!(m.fig.layout)
     display(m.fig)
-    return
-    recordframe!(m.video_stream)
+
+    m.save_video && recordframe!(m.video_stream)
+
     @showprogress "Calculating beam propagation..." for updidx in eachindex(z_update_idxs)
         if updidx > 1
             p.iz_start = z_update_idxs[updidx-1]
@@ -318,13 +281,20 @@ function fd_bpm!(m::Model)
         # update observables
         ri_data[] = real(p.n_out[ix_plot, iy_plot])
         field_plot_data[] = abs2.(p.E2[ix_plot,iy_plot]).*1e4
-        phase_plot_data[] = angle.(p.E2[ix_plot, iy_plot])
+        alpha_data = max.(0, @. (1 + log10(abs(p.E2[ix_plot,iy_plot]/maxE0)^2)/3))
+        maxE0 = maximum(abs.(p.E2))
+        Φ = angle.(p.E2[ix_plot, iy_plot])
+        Φ[alpha_data .== 0] .= NaN
+        phase_plot_data[] = Φ
         power_plot_data[][end-length(z_update_idxs) + updidx] = Point2f(m.z[end-length(z_update_idxs) + updidx]*1e3, m.powers[end-length(z_update_idxs) + updidx])
+
+        if m.store_field_3D
+            m.E3D[end][:,:,end-length(z_update_idxs)+updidx] = p.E2
+        end
 
         recordframe!(m.video_stream)
 
         swap_pointers!(p.E1, p.E2)
-        # TODO store E3D
     end
 
     m.E.lx = lx(m)

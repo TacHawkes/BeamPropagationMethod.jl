@@ -1,180 +1,142 @@
-function fftbpm!(p)
-    # check fields
-    get!(p, :name, @__FILE__)    
-    get!(p, :figNum, 1)
-    get!(p, :figTitle, "")
-    get!(p, :finalizeVideo, false)    
-    get!(p, :saveVideo, false)
-    get!(p, :finalizeVideo, false)    
-    if p[:saveVideo] && !haskey(p, :videoName)
-        p[:videoName] = p[:name] * ".mp4"
-    end
-    get!(p, :Intensity_colormap, 1)
-    get!(p, :Phase_colormap, 3)        
-    
-    Nz = p[:updates]
+function fft_bpm!(m::Model)
+    m.dz_target = m.lz/m.updates
+    nz = nz(m)
 
-    targetLx = p[:padfactor] * p[:Lx_main]
-    targetLy = p[:padfactor] * p[:Ly_main]
+    _dx = dx(m)
+    _dy = dy(m)
+    _dz = dz(m)
+    _nx = nx(m)
+    _ny = ny(m)
+    _lx = lx(m)
+    _ly = ly(m)
 
-    dx = p[:Lx_main] / p[:Nx_main]
-    dy = p[:Ly_main] / p[:Ny_main]
-    dz = p[:Lz]/Nz
+    kx = 2π/_lx*[0:floor(Int64,(_nx-1)/2);floor(Int64,-(_nx-1)/2):-1]
+    ky = 2π/_ly*[0:floor(Int64,(_ny-1)/2);floor(Int64,-(_ny-1)/2):-1]
 
-    Nx = round(Int64, targetLx/dx)
-    if Nx % 2 != p[:Nx_main] % 2
-        Nx += 1
-    end
-    Ny = round(Int64, targetLy/dy)
-    if Ny % 2 != p[:Ny_main] % 2
-        Ny += 1
-    end
+    prop_kernel = [exp(im*_dz*(kxi^2 + kyi^2)*m.λ/(4π*m.n0)) for (kxi, kyj) in Iterators.product(kx,ky)]
 
-    Lx = Nx*dx
-    Ly = Ny*dy
+    x = _dx*(-(_nx-1)/2:(_nx-1)/2)
+    y = _dy*(-(_ny-1)/2:(_ny-1)/2)
 
-    kx = 2π/Lx*[0:floor(Int64,(Nx-1)/2);floor(Int64,-(Nx-1)/2):-1]
-    ky = 2π/Ly*[0:floor(Int64,(Ny-1)/2);floor(Int64,-(Ny-1)/2):-1]
-    kX, kY = ndgrid(convert.(Float32, kx), convert.(Float32, ky))
+    absorber = [exp(-_dz*max(0, max(abs(yj) - m.ly_main/2, abs(xi) - m.lx_main/2))^2*m.alpha) for (xi, yj) in Iterators.product(x,y)]
 
-    prop_kernel = @. exp(im*dz*(kX^2 + kY^2)*p[:lambda]/(4π*p[:n_0]))
-
-    x = collect(dx*(-(Nx-1)/2:(Nx-1)/2))
-    y = collect(dy*(-(Ny-1)/2:(Ny-1)/2))
-    X, Y = ndgrid(convert.(Float32, x), convert.(Float32, y))
-
-    absorber = @. exp(-dz*max(0, max(abs(Y) - p[:Ly_main]/2, abs(X) - p[:Lx_main]/2))^2*p[:alpha])
-
-    if isa(p[:E], Function)
-        E = p[:E](X, Y, p[:Eparameters])
-        p[:E_0] = E        
+    if m.prior_data
+        m.z = [m.z _dz*(1:_nz) + m.z[end]]
     else
-        Nx_source, Ny_source = size(p[:E].field)
-        dx_source = p[:E].Lx/Nx_source
-        dy_source = p[:E].Ly/Ny_source
-        x_source = dx_source*(-(Nx_source - 1)/2:(Nx_source-1)/2)
-        y_source = dy_source*(-(Ny_source - 1)/2:(Ny_source-1)/2)        
-        E = Interpolations.LinearInterpolation((x_source, y_source), p[:E].field; extrapolation_bc=Line())            
-        E = E.(X, Y)        
+        m.z = [0 _dz*(1:_nz)]
     end
 
-    if p[:saveVideo]
-        if haskey(p, :videoHandle)
-            video = p[:videoHandle]
-        else
-            video = Animation()
-        end
+    # beam initialization
+    nx_source, ny_source = size(m.E.field)
+    dx_source = m.E.lx / nx_source
+    dy_source = m.E.ly / ny_source
+    x_source = get_grid_array(nx_source, dx_source, m.E.ysymmetry)
+    y_source = get_grid_array(ny_source, dy_source, m.E.xsymmetry)
+    x_source, y_source, E_source = calc_full_field(x_source, y_source, m.E.field)
+    itp = Interpolations.LinearInterpolation((x_source, y_source), E_source; extrapolation_bc=zero(eltype(E_source)))
+    E = [itp(xi, yj) for (xi, yj) in Iterators.product(_x, _y)]
+    E *= √(sum(abs2.(E_source))/sum(abs2.(E)))
+
+    # visualisation
+    if isnothing(m.fig)
+        m.fig = Figure()
+    else
+        empty!(m.fig)
     end
 
-    # init plot
-    plots = plot(
-        layout=(1,2),
-        size=(1000, 800),
-        framestyle=:box
+    if m.save_video && isnothing(m.video_stream)
+        m.video_stream = VideoStream(m.fig; framerate=10)
+    end
+
+    update_stored_fields!(m, _nx, _ny, E)
+    redline_x, redline_y = redlines(m::Model)
+
+    xlims = [-1 1]*_lx/(2*m.plot_zoom)
+    ylims = [-1 1]*_ly/(2*m.plot_zoom)
+
+    axis2 = m.fig[1,2] = Axis(m.fig,
+                            xlabel = "Propagation distance [m]",
+                            ylabel = "Relative power remaining",
+                            yminorticksvisible = true,
+                            yminorgridvisible = true
     )
-    plot_idx = 1
+    xlims!(axis2, 0, m.z[end]*1e3)
+    ylims!(axis2, 0, 1.1)
+    power_plot_data = Observable([Point2f(x_i,y_i) for (x_i, y_i) in zip(m.z*1e3, m.powers)])
+    plot2 = lines!(axis2, power_plot_data, linewidth=2)
 
-    heatmap!(x*1e6, y*1e6, abs.(E).^2, c=get_colormap(p[:Intensity_colormap]), sp=1)
-    Efield_plot = plots.series_list[plot_idx]
-    Efield_plot.plotattributes[:z] = abs.(E).^2
-
-    plot_idx += 1
-    plot!(
-        xlims=([-1, 1]*1e6*Lx/(2*p[:displayScaling])),
-        ylims=([-1, 1]*1e6*Ly/(2*p[:displayScaling])),
-        xlabel="x [μm]",
-        ylabel="y [μm]",
-        title="Intensity [W/m^2]",
-        legend=false,
-        aspect_ratio=:equal,
-        sp=1
-    )    
-    if haskey(p, :plotEmax)
-        plot!(
-            clims=(0, p[:plotEmax]*maximum(abs.(E).^2)),
-            sp=1
-        )    
-    end
-    plot!(1e6.*[-p[:Lx_main], p[:Lx_main], p[:Lx_main], -p[:Lx_main], -p[:Lx_main]]/2,1e6.*[p[:Ly_main], p[:Ly_main], -p[:Ly_main], -p[:Ly_main], p[:Ly_main]]/2,c=:red,linestyle=:dash,sp=1)
-    plot_idx += 1
-    heatmap!(x*1e6, y*1e6, angle.(E), c=get_colormap(p[:Phase_colormap]), sp=2)        
-    phase_plot = plots.series_list[plot_idx]
-    phase_plot.plotattributes[:z] = angle.(E)
-    phase_plot.plotattributes[:background_color_inside] = 0.7*[1,1,1]    
-    plot!(
-        sp=2,
-        xlims=([-1, 1]*1e6*Lx/(2*p[:displayScaling])),
-        ylims=([-1, 1]*1e6*Ly/(2*p[:displayScaling])),
-        clims=(-π,π),
-        aspect_ratio=:equal,
-        xlabel="x [μm]",
-        ylabel="y [μm]",
-        title="Phase [rad]",
-        legend=false        
+    axis3a = m.fig[2,1][1,1] = Axis(m.fig,
+                            xlabel = "x [m]",
+                            ylabel = "y [m]",
+                            title = "Intensity [W/m^2]",
+                            limits = Tuple([xlimits ylimits])
     )
-    
-    plot_idx += 1
-    plot!(1e6.*[-p[:Lx_main], p[:Lx_main], p[:Lx_main], -p[:Lx_main], -p[:Lx_main]]/2,1e6.*[p[:Ly_main], p[:Ly_main], -p[:Ly_main], -p[:Ly_main], p[:Ly_main]]/2,c=:red,linestyle=:dash,sp=2)
-    plot_idx += 1
-    display(plot!())    
+    field_plot_data = Observable(abs2.(E[ix_plot,iy_plot]).*1e4)
+    hm3a = heatmap!(axis3a,
+                    x_plot*1e6,
+                    y_plot*1e6,
+                    field_plot_data,
+                    colormap=m.intensity_colormap,
+                    colorrange=(m.plot_field_max > 0.0 ? (0, 1e4*m.plot_field_max*maximum(abs2.(E))) : CairoMakie.Makie.Automatic())
+    )
+    lines!(axis3, vec(redline_x), vec(redline_y), color=:red, linestyle=:dash, linewidth=2)
+    Colorbar(m.fig[2,1][1,2], hm3a, tickformat="{:.3f}", ticks=LinearTicks(5))
 
-    if p[:saveVideo]
-        frame(video)
-    end
+    axis3b = m.fig[2,2][1,1] = Axis(m.fig,
+                             xlabel = "x [m]",
+                             ylabel = "x [m]",
+                             title = "Phase [rad]",
+                             limits = Tuple([xlimits ylimits]),
+                             aspect = DataAspect()
+    )
+    maxE0 = maximum(abs.(E))
+    alpha_data = max.(0, @. (1 + log10(abs(E[ix_plot,iy_plot]/maxE0)^2)/3))
+    Φ = angle.(E[ix_plot, iy_plot])
+    Φ[alpha_data .== 0] .= NaN
+    phase_plot_data = Observable(Φ)
 
-    updatesliceindices = unique(round.(collect(LinRange(1, Nz, min(Nz, p[:updates])))))
-    nextupdatesliceindicesindex = 1
-    #status information
-    status = Progress(Nz; dt=0.5, showspeed=true, barglyphs=BarGlyphs("[=> ]"), color=:cyan)       
-    @info "Pre-planning optimal FFT..."    
+    hm3b = heatmap!(axis3b,
+                    x_plot*1e6,
+                    y_plot*1e6,
+                    phase_plot_data,
+                    colormap=m.phase_colormap,
+                    colorrange=(-π,π)
+    )
+    Colorbar(m.fig[2,2][1,2], hm3b,ticks=(-π:π:π, ["-π", "0", "π"]))
+
+    display(m.fig)
+    m.save_video && recordframe!(m.video_stream)
+
     Pfft = plan_fft!(similar(E); flags=FFTW.PATIENT, timelimit=5)
     Pifft = inv(Pfft)
-    @info "Pre-planning FFT done"
-    @info "Starting FFT-BPM iteration..."
-    for zidx=1:Nz     
-        # propagate   
+
+    for zidx in 1:nz
+        # propagate
         # forward-FFT
-        Pfft * E     
+        Pfft * E
         Threads.@threads for i in eachindex(E)
             E[i] *= prop_kernel[i]
-        end       
+        end
         # inverse-FFT
         Pifft * E
         Threads.@threads for i in eachindex(E)
             E[i] *= absorber[i]
         end
 
-        if zidx == updatesliceindices[nextupdatesliceindicesindex]
-            Efield_plot.plotattributes[:z] = abs.(E).^2
-            phase_plot.plotattributes[:z] = angle.(E)
-
-            nextupdatesliceindicesindex += 1
-            display(plot!())
-            sleep(0.01)
-
-            if p[:saveVideo]
-                frame(video)
-            end
-
-            ProgressMeter.next!(status)
+        if m.store_field_3D
+            m.E3D[end][:,:,end-nz+zidx] = E
         end
+        m.powers[end-nz+zidx] = sub(abs2.(E))
+        power_plot_data[][end-nz+zidx] = Point2f(m.z[end-nz+zidx]*1e3, m.powers[end-nz+zidx])
+        field_plot_data[] = abs2.(E).*1e4
+        alpha_data = max.(0, @. (1 + log10(abs(E/maxE0)^2)/3))
+        maxE0 = maximum(abs.(E))
+        Φ = angle.(E)
+        Φ[alpha_data .== 0] .= NaN
+        phase_plot_data[] = Φ
+
+        recordframe!(m.video_stream)
     end
-
-    if p[:saveVideo]
-        if p[:finalizeVideo]
-            mp4(video, p[:videoName]; fps=20, loop=0)
-        else
-            p[:videoHandle] = video
-        end
-    end    
-    p[:E] = EField(
-        E,
-        Lx,
-        Ly
-    )
-    
-    p[:x] = x;
-    p[:y] = y;
 
     @info "FFT-BPM iteration completed"
 end
